@@ -1,0 +1,17 @@
+services:
+  twitch-recorder:
+    build: .
+    container_name: twitch-recorder
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

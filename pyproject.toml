@@ -1,0 +1,15 @@
+[project]
+name = "twitch-telegram-archiver"
+version = "0.1.0"
+description = "script to record online Twitch streams and archive them"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "load-dotenv>=0.1.0",
+    "requests>=2.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.18",
+]
