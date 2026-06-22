@@ -5,6 +5,8 @@ from .database import db
 from .telegram_sender import telegram
 from .health import heartbeat
 
+_SENTINEL = "__SENTINEL__"
+
 
 class UploadWorker:
     def __init__(self) -> None:
@@ -14,6 +16,10 @@ class UploadWorker:
     def start(self) -> None:
         self.thread.start()
 
+    def stop(self) -> None:
+        self.queue.put((_SENTINEL, _SENTINEL))
+        self.thread.join(timeout=30)
+
     def enqueue(self, file_path: str, caption: str) -> None:
         self.queue.put((file_path, caption))
 
@@ -21,6 +27,8 @@ class UploadWorker:
         while True:
             heartbeat()
             file_path, caption = self.queue.get()
+            if file_path == _SENTINEL:
+                break
             try:
                 filename = os.path.basename(file_path)
                 if db.is_uploaded(filename):

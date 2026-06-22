@@ -1,11 +1,10 @@
 import os
-import time
 import shutil
 import subprocess
 
 from pathlib import Path
 from datetime import datetime, timezone
-from threading import Thread
+from threading import Thread, Event
 from typing import Optional
 
 from .config import Config
@@ -23,6 +22,7 @@ class Recorder:
         self.started_at: Optional[str] = None
         self.streamlink: Optional[subprocess.Popen[bytes]] = None
         self.ffmpeg: Optional[subprocess.Popen[bytes]] = None
+        self._watcher_wake = Event()
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -84,6 +84,7 @@ class Recorder:
             self.streamlink.terminate()
         if self.ffmpeg:
             self.ffmpeg.terminate()
+        self._watcher_wake.set()
         try:
             if self.streamlink:
                 self.streamlink.wait(timeout=30)
@@ -112,7 +113,8 @@ class Recorder:
                 caption = self.build_caption(file.name, ended=False)
                 uploader.enqueue(str(file), caption)
                 uploaded.add(str(file))
-            time.sleep(10)
+            self._watcher_wake.wait(timeout=10)
+            self._watcher_wake.clear()
         self.upload_remaining(uploaded)
 
     def upload_remaining(self, uploaded: set[str]) -> None:
