@@ -1,6 +1,6 @@
 import time
 import threading
-
+import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 last_activity = time.time()
@@ -32,4 +32,4 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", 8080), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print("Health server started")
+    logging.info("Health server started")

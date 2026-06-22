@@ -1,4 +1,21 @@
 services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:10.1
+    container_name: telegram-bot-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    command:
+      - --api-id=${TELEGRAM_API_ID}
+      - --api-hash=${TELEGRAM_API_HASH}
+      - --local
+      - --http-port=8081
+    volumes:
+      - ./telegram-bot-api-data:/var/lib/telegram-bot-api
+      - ./data:/data
+    ports:
+      - "8081:8081"
+
   twitch-recorder:
     build: .
     container_name: twitch-recorder
@@ -9,7 +26,6 @@ services:
       - ./data:/data
     ports:
       - "8080:8080"
-
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s

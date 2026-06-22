@@ -1,7 +1,6 @@
 import sqlite3
 from pathlib import Path
-
-from .config import Config
+from app.config import Config
 
 
 class Database:

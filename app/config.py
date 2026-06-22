@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Config:
     # We use os.environ instead of os.getenv to raise error if any of these are not present
     TWITCH_CHANNEL = os.environ["TWITCH_CHANNEL"]
@@ -11,6 +12,10 @@ class Config:
 
     TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
     TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
+    TELEGRAM_API_ID = int(os.environ["TELEGRAM_API_ID"])
+    TELEGRAM_API_HASH = os.environ["TELEGRAM_API_HASH"]
+
+    TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
     TELEGRAM_UPLOAD_MODE = os.getenv("TELEGRAM_UPLOAD_MODE", "video")
 
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))

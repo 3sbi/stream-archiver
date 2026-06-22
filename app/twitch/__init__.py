@@ -3,8 +3,12 @@ import requests
 from typing import Mapping
 from dataclasses import dataclass
 
-from .types import ComscoreStreamingQueryResponses, AuthResponse, StreamsApiResponse
-from ..config import Config
+from app.twitch.types import (
+    ComscoreStreamingQueryResponses,
+    AuthResponse,
+    StreamsApiResponse,
+)
+from app.config import Config
 
 
 @dataclass

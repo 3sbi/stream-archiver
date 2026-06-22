@@ -1,16 +1,25 @@
 import os
+import time
 import shutil
 import subprocess
-
+import traceback
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
-from threading import Thread, Event
+import threading
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-from .config import Config
-from .database import db
-from .uploader import uploader
-from .health import heartbeat
+from app.uploader import uploader
+from app.config import Config
+from app.database import db
+from app.health import heartbeat
+
+# Segment duration is chosen empirically.
+# Each segment should be as large as possible without exceeding the 2 GiB limit of Telegram uploads.
+# For example, with an average stream bitrate of 6200kbps, a 2630-second segment results in a file size of ~ 1,9 GiB.
+# 6_200_000 * 2630 / 8 = 2_038_250_000 bytes ~ 1.9 GiB
+SEGMENT_TIME = 2630
 
 
 class Recorder:
@@ -19,10 +28,9 @@ class Recorder:
         self.running: bool = False
         self.current_session: Optional[str] = None
         self.current_title: Optional[str] = None
-        self.started_at: Optional[str] = None
+        self.started_at: str = ""
         self.streamlink: Optional[subprocess.Popen[bytes]] = None
         self.ffmpeg: Optional[subprocess.Popen[bytes]] = None
-        self._watcher_wake = Event()
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -33,10 +41,7 @@ class Recorder:
         if free < Config.MIN_FREE_DISK_GB:
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
-    def build_segment_pattern(self, session_id: str) -> str:
-        return os.path.join(Config.SEGMENTS_DIR, f"{session_id}_%04d.ts")
-
-    def start_recording(self, url: str, title: str, started_at: str) -> str:
+    def start_recording(self, url: str, title: str, started_at: str):
         self.check_disk_space()
         self.current_title = title
         self.started_at = started_at
@@ -44,7 +49,9 @@ class Recorder:
             f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
         )
         db.create_stream(self.current_session, title, started_at)
-        segment_pattern: str = self.build_segment_pattern(self.current_session)
+        segment_pattern: str = os.path.join(
+            Config.SEGMENTS_DIR, f"{self.current_session}_%04d.mp4"
+        )
         streamlink_cmd: list[str] = [
             "streamlink",
             "--retry-streams",
@@ -53,7 +60,7 @@ class Recorder:
             "0",
             "--stdout",
             url,
-            "720p60,720p48,720p,best",
+            "720p,720p48,720p60,best",
         ]
 
         ffmpeg_cmd = [
@@ -65,18 +72,23 @@ class Recorder:
             "pipe:0",
             "-c",
             "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            f"{SEGMENT_TIME}",
             "-reset_timestamps",
             "1",
+            "-metadata",
+            f"duration={SEGMENT_TIME}",
             "-segment_format",
-            "mpegts",
+            "mp4",
             segment_pattern,
         ]
         self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
         self.ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=self.streamlink.stdout)
         self.running = True
-        Thread(target=self.segment_watcher, daemon=True).start()
-        print("Recording started:", title)
-        return segment_pattern
+        threading.Thread(target=self.segment_watcher, daemon=True).start()
+        logging.info(f"Recording started: {title}")
 
     def stop_recording(self) -> None:
         self.running = False
@@ -84,7 +96,6 @@ class Recorder:
             self.streamlink.terminate()
         if self.ffmpeg:
             self.ffmpeg.terminate()
-        self._watcher_wake.set()
         try:
             if self.streamlink:
                 self.streamlink.wait(timeout=30)
@@ -95,42 +106,62 @@ class Recorder:
                 self.ffmpeg.wait(timeout=30)
         except subprocess.TimeoutExpired:
             pass
-        db.finish_stream(self.current_session, datetime.now(timezone.utc).isoformat())
-        print("Recording stopped")
+        logging.info("Recording stopped")
 
     def segment_watcher(self) -> None:
         uploaded = {str(Path(Config.SEGMENTS_DIR) / f) for f in db.get_uploaded_files()}
-        while self.running:
-            heartbeat()
-            files = sorted(
-                Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
-            )
-            # Upload all completed files.
-            # Skip newest because ffmpeg may still be writing it.
-            for file in files[:-1]:
-                if str(file) in uploaded:
-                    continue
-                caption = self.build_caption(file.name, ended=False)
-                uploader.enqueue(str(file), caption)
-                uploaded.add(str(file))
-            self._watcher_wake.wait(timeout=10)
-            self._watcher_wake.clear()
-        self.upload_remaining(uploaded)
+        pending: set[str] = set()
 
-    def upload_remaining(self, uploaded: set[str]) -> None:
+        def on_uploaded(filename: str) -> None:
+            pending.discard(filename)
+            uploaded.add(filename)
+            db.mark_uploaded(filename, None)
+
+        while self.running:
+            try:
+                heartbeat()
+                files = sorted(
+                    Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
+                )
+                # Upload all completed files.
+                # Skip newest because ffmpeg may still be writing it.
+                for file in files[:-1]:
+                    if str(file) in uploaded or str(file) in pending:
+                        continue
+                    caption = self.build_caption(file.name, ended=False)
+                    uploader.enqueue(str(file), caption, on_uploaded)
+                    pending.add(str(file))
+                time.sleep(10)
+            except Exception:
+                logging.error("segment_watcher error")
+                traceback.print_exc()
+                time.sleep(10)
+        self.upload_remaining(uploaded, pending)
+
+    def upload_remaining(self, uploaded: set[str], pending: set[str]) -> None:
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4"))
         total = len(files)
+
+        def on_uploaded(filename: str) -> None:
+            db.mark_uploaded(filename, None)
+
         for index, file in enumerate(files, start=1):
-            if str(file) in uploaded:
+            if str(file) in uploaded or str(file) in pending:
                 continue
-            caption = self.build_caption(file.name, ended=(index == total))
-            uploader.enqueue(str(file), caption)
+            caption = self.build_caption(
+                file.name,
+                ended=(index == total),
+            )
+            uploader.enqueue(str(file), caption, on_uploaded)
 
     def build_caption(self, filename: str, ended: bool = False) -> str:
-        part = filename.split("_")[-1].replace(".mp4", "")
-        caption = f"{self.current_title}\nStarted at: {self.started_at}\n\nPart {part}"
+        part = Path(filename).stem.split("_")[-1]
+        date = datetime.fromisoformat(self.started_at).astimezone(
+            ZoneInfo("Europe/Moscow")
+        )
+        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart {part}"
         if ended:
-            caption += "\n✅ Stream ended"
+            caption += "\n🏁 Stream ended"
         return caption[:1024]
 
 

@@ -1,50 +1,58 @@
 import os
 import queue
 import threading
+import logging
+from typing import Callable
 from .database import db
 from .telegram_sender import telegram
 from .health import heartbeat
 
-_SENTINEL = "__SENTINEL__"
-
 
 class UploadWorker:
     def __init__(self) -> None:
-        self.queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.queue: queue.Queue[tuple[str, str, Callable[[str], None] | None]] = (
+            queue.Queue()
+        )
         self.thread = threading.Thread(target=self._worker, daemon=True)
 
     def start(self) -> None:
         self.thread.start()
 
-    def stop(self) -> None:
-        self.queue.put((_SENTINEL, _SENTINEL))
-        self.thread.join(timeout=30)
-
-    def enqueue(self, file_path: str, caption: str) -> None:
-        self.queue.put((file_path, caption))
+    def enqueue(
+        self,
+        file_path: str,
+        caption: str,
+        callback: Callable[[str], None] | None = None,
+    ) -> None:
+        filename = os.path.basename(file_path)
+        logging.info(f"Added new file to telegram upload queue: {filename}")
+        self.queue.put((file_path, caption, callback))
 
     def _worker(self) -> None:
         while True:
             heartbeat()
-            file_path, caption = self.queue.get()
-            if file_path == _SENTINEL:
-                break
+            file_path, caption, callback = self.queue.get()
             try:
                 filename = os.path.basename(file_path)
                 if db.is_uploaded(filename):
-                    print("Already uploaded:", filename)
+                    logging.info(f"Already uploaded: {filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     continue
-                print("Uploading:", filename)
+                file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
+                logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}")
                 result = telegram.upload(file_path, caption)
-                message_id = telegram.get_message_id(result)
-                db.mark_uploaded(filename, message_id)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                print("Uploaded:", filename)
-            except Exception as e:
-                print("Upload worker error:", e)
+                if result:
+                    message_id = telegram.get_message_id(result)
+                    logging.info(f"Uploaded file: {filename}")
+                    db.mark_uploaded(filename, message_id)
+                    if os.path.exists(file_path):
+                        logging.info(f"Removing uploaded file: {filename}")
+                        os.remove(file_path)
+                    if callback:
+                        callback(file_path)
+            except Exception:
+                logging.exception("Upload worker error", exc_info=True)
             finally:
                 self.queue.task_done()
                 heartbeat()
