@@ -34,15 +34,17 @@ class Recorder:
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
     def build_segment_pattern(self, session_id: str) -> str:
-        return os.path.join(Config.SEGMENTS_DIR, f"{session_id}_%04d.mp4")
+        return os.path.join(Config.SEGMENTS_DIR, f"{session_id}_%04d.ts")
 
-    def start_recording(self, title: str, started_at: str) -> None:
+    def start_recording(self, url: str, title: str, started_at: str) -> str:
         self.check_disk_space()
         self.current_title = title
         self.started_at = started_at
-        self.current_session = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        self.current_session = datetime.now(timezone.utc).strftime(
+            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
+        )
         db.create_stream(self.current_session, title, started_at)
-        segment_pattern = self.build_segment_pattern(self.current_session)
+        segment_pattern: str = self.build_segment_pattern(self.current_session)
         streamlink_cmd: list[str] = [
             "streamlink",
             "--retry-streams",
@@ -50,9 +52,10 @@ class Recorder:
             "--retry-max",
             "0",
             "--stdout",
-            f"https://twitch.tv/{Config.TWITCH_CHANNEL}",
-            "best",
+            url,
+            "720p60,720p48,720p,best",
         ]
+
         ffmpeg_cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -62,12 +65,10 @@ class Recorder:
             "pipe:0",
             "-c",
             "copy",
-            "-f",
-            "segment",
-            "-segment_time",
-            str(Config.SEGMENT_SECONDS),
             "-reset_timestamps",
             "1",
+            "-segment_format",
+            "mpegts",
             segment_pattern,
         ]
         self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
@@ -75,6 +76,7 @@ class Recorder:
         self.running = True
         Thread(target=self.segment_watcher, daemon=True).start()
         print("Recording started:", title)
+        return segment_pattern
 
     def stop_recording(self) -> None:
         self.running = False
@@ -124,16 +126,9 @@ class Recorder:
 
     def build_caption(self, filename: str, ended: bool = False) -> str:
         part = filename.split("_")[-1].replace(".mp4", "")
-        caption = (
-            f"🎮 {self.current_title}\n\n"
-            f"Channel: "
-            f"{Config.TWITCH_CHANNEL}\n"
-            f"Started: "
-            f"{self.started_at}\n\n"
-            f"Part {part}"
-        )
+        caption = f"{self.current_title}\nStarted at: {self.started_at}\n\nPart {part}"
         if ended:
-            caption += "\n\n✅ Stream ended"
+            caption += "\n✅ Stream ended"
         return caption[:1024]
 
 
