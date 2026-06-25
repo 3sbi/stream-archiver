@@ -17,6 +17,7 @@ class Config:
 
     TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
     TELEGRAM_UPLOAD_MODE = os.getenv("TELEGRAM_UPLOAD_MODE", "video")
+    TELEGRAM_WATERMARK_TEXT = os.getenv("TELEGRAM_WATERMARK_TEXT", "")
 
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))

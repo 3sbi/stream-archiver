@@ -7,7 +7,7 @@ from app.uploader import uploader
 from app.recorder import recorder
 from app.health import start_health_server, heartbeat
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, force=True)
 
 
 def main():
