@@ -40,7 +40,7 @@ class UploadWorker:
                         os.remove(file_path)
                     continue
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
-                logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}")
+                logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
                 result = telegram.upload(file_path, caption)
                 if result:
                     message_id = telegram.get_message_id(result)

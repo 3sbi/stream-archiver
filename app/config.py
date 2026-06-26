@@ -23,3 +23,9 @@ class Config:
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))
     DB_PATH = os.getenv("DB_PATH", "data/recorder.db")
     SEGMENTS_DIR = os.getenv("SEGMENTS_DIR", "data/segments")
+
+    # Default segment duration is chosen empirically.
+    # Each segment should be as large as possible without exceeding the 2 GiB limit of Telegram uploads.
+    # For example, with an average stream bitrate of 6200kbps, a 2630-second segment results in a file size of ~ 1,9 GiB.
+    # 6_200_000 * 2630 / 8 = 2_038_250_000 bytes ~ 1.9 GiB
+    SEGMENT_TIME = int(os.getenv("SEGMENT_TIME", "2630"))

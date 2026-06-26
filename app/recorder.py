@@ -15,12 +15,6 @@ from app.config import Config
 from app.database import db
 from app.health import heartbeat
 
-# Segment duration is chosen empirically.
-# Each segment should be as large as possible without exceeding the 2 GiB limit of Telegram uploads.
-# For example, with an average stream bitrate of 6200kbps, a 2630-second segment results in a file size of ~ 1,9 GiB.
-# 6_200_000 * 2630 / 8 = 2_038_250_000 bytes ~ 1.9 GiB
-SEGMENT_TIME = 2630
-
 
 class Recorder:
     def __init__(self) -> None:
@@ -75,11 +69,11 @@ class Recorder:
             "-f",
             "segment",
             "-segment_time",
-            f"{SEGMENT_TIME}",
+            f"{Config.SEGMENT_TIME}",
             "-reset_timestamps",
             "1",
             "-metadata",
-            f"duration={SEGMENT_TIME}",
+            f"duration={Config.SEGMENT_TIME}",
             "-segment_format",
             "mp4",
             segment_pattern,
