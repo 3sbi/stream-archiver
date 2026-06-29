@@ -177,7 +177,7 @@ class Recorder:
     def build_caption(self, filename: str, ended: bool = False) -> str:
         part = Path(filename).stem.split("_")[-1]
         date = datetime.fromisoformat(self.started_at).astimezone(
-            ZoneInfo("Europe/Moscow")
+            ZoneInfo(Config.TIMEZONE)
         )
         caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart {part}"
         if ended:
