@@ -121,9 +121,13 @@ class Recorder:
                 files = sorted(
                     Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4")
                 )
-                # Upload all completed files.
-                # Skip newest because ffmpeg may still be writing it.
-                for file in files[:-1]:
+                # Upload completed files, skipping any modified within the last
+                # segment duration (ffmpeg may still be writing them).
+                now = time.time()
+                for file in files:
+                    age = now - file.stat().st_mtime
+                    if age < Config.SEGMENT_TIME:
+                        continue
                     with lock:
                         if str(file) in uploaded or str(file) in pending:
                             continue
