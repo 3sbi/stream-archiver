@@ -10,7 +10,7 @@ from .health import heartbeat
 
 class UploadWorker:
     def __init__(self) -> None:
-        self.queue: queue.Queue[tuple[str, str, Callable[[str], None] | None]] = (
+        self.queue: queue.Queue[tuple[str, str, Callable[[str, bool], None] | None]] = (
             queue.Queue()
         )
         self.thread = threading.Thread(target=self._worker, daemon=True)
@@ -22,7 +22,7 @@ class UploadWorker:
         self,
         file_path: str,
         caption: str,
-        callback: Callable[[str], None] | None = None,
+        callback: Callable[[str, bool], None] | None = None,
     ) -> None:
         filename = os.path.basename(file_path)
         logging.info(f"Added new file to telegram upload queue: {filename}")
@@ -32,12 +32,15 @@ class UploadWorker:
         while True:
             heartbeat()
             file_path, caption, callback = self.queue.get()
+            success = False
             try:
                 filename = os.path.basename(file_path)
                 if db.is_uploaded(filename):
                     logging.info(f"Already uploaded: {filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
+                    self.queue.task_done()
+                    heartbeat()
                     continue
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
@@ -49,13 +52,16 @@ class UploadWorker:
                     if os.path.exists(file_path):
                         logging.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)
-                    if callback:
-                        callback(file_path)
+                    success = True
             except Exception:
                 logging.exception("Upload worker error", exc_info=True)
-            finally:
-                self.queue.task_done()
-                heartbeat()
+            if callback:
+                try:
+                    callback(file_path, success)
+                except Exception:
+                    pass
+            self.queue.task_done()
+            heartbeat()
 
 
 uploader: UploadWorker = UploadWorker()

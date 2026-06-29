@@ -103,48 +103,74 @@ class Recorder:
         logging.info("Recording stopped")
 
     def segment_watcher(self) -> None:
+        session = self.current_session
         uploaded = {str(Path(Config.SEGMENTS_DIR) / f) for f in db.get_uploaded_files()}
         pending: set[str] = set()
+        lock = threading.Lock()
 
-        def on_uploaded(filename: str) -> None:
-            pending.discard(filename)
-            uploaded.add(filename)
-            db.mark_uploaded(filename, None)
+        def on_uploaded(filename: str, success: bool = False) -> None:
+            with lock:
+                pending.discard(filename)
+                if success:
+                    uploaded.add(filename)
+                    db.mark_uploaded(filename, None)
 
         while self.running:
             try:
                 heartbeat()
                 files = sorted(
-                    Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
+                    Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4")
                 )
                 # Upload all completed files.
                 # Skip newest because ffmpeg may still be writing it.
                 for file in files[:-1]:
-                    if str(file) in uploaded or str(file) in pending:
-                        continue
+                    with lock:
+                        if str(file) in uploaded or str(file) in pending:
+                            continue
                     caption = self.build_caption(file.name, ended=False)
                     uploader.enqueue(str(file), caption, on_uploaded)
-                    pending.add(str(file))
+                    with lock:
+                        pending.add(str(file))
                 time.sleep(10)
             except Exception:
                 logging.error("segment_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
-        self.upload_remaining(uploaded, pending)
+        self.upload_remaining(uploaded, pending, lock, session=session)
 
-    def upload_remaining(self, uploaded: set[str], pending: set[str]) -> None:
-        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4"))
-        total = len(files)
+    def upload_remaining(
+        self,
+        uploaded: set[str],
+        pending: set[str],
+        lock: threading.Lock,
+        session: str | None = None,
+    ) -> None:
+        if session is None:
+            session = self.current_session
 
-        def on_uploaded(filename: str) -> None:
-            db.mark_uploaded(filename, None)
+        if self.ffmpeg and self.ffmpeg.poll() is None:
+            try:
+                self.ffmpeg.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+        time.sleep(1)
 
-        for index, file in enumerate(files, start=1):
-            if str(file) in uploaded or str(file) in pending:
-                continue
+        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
+
+        def on_uploaded(filename: str, success: bool = False) -> None:
+            if success:
+                db.mark_uploaded(filename, None)
+
+        remaining: list[Path] = []
+        for file in files:
+            with lock:
+                if str(file) not in uploaded and str(file) not in pending:
+                    remaining.append(file)
+
+        for index, file in enumerate(remaining, start=1):
             caption = self.build_caption(
                 file.name,
-                ended=(index == total),
+                ended=(index == len(remaining)),
             )
             uploader.enqueue(str(file), caption, on_uploaded)
 
