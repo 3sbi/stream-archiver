@@ -18,6 +18,15 @@ logging.basicConfig(
 
 def main():
     logging.info(f"Watching Twitch channel: {Config.TWITCH_CHANNEL}")
+    logging.info(
+        "Config: "
+        f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
+        f"segment_time={Config.SEGMENT_TIME}s, "
+        f"check_interval={Config.CHECK_INTERVAL}s, "
+        f"min_free_disk={Config.MIN_FREE_DISK_GB}GiB, "
+        f"timezone={Config.TIMEZONE}, "
+        f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
+    )
     start_health_server()
     uploader.start()
     stream_live: bool = False
