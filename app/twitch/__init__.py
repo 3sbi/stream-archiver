@@ -1,6 +1,7 @@
 import time
 import requests
 from typing import Mapping
+import logging
 from dataclasses import dataclass
 
 from app.twitch.types import (
@@ -23,21 +24,26 @@ class TwitchClient:
         self.refresh_at = 0
 
     def refresh_token(self):
-        response = requests.post(
-            "https://id.twitch.tv/oauth2/token",
-            params={
-                "client_id": Config.TWITCH_CLIENT_ID,
-                "client_secret": Config.TWITCH_CLIENT_SECRET,
-                "grant_type": "client_credentials",
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                "https://id.twitch.tv/oauth2/token",
+                params={
+                    "client_id": Config.TWITCH_CLIENT_ID,
+                    "client_secret": Config.TWITCH_CLIENT_SECRET,
+                    "grant_type": "client_credentials",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException:
+            logging.warning("Twitch token refresh failed", exc_info=True)
+            return
+
         data: AuthResponse = response.json()
         self.token = data["access_token"]
         # refresh 5 minutes before expiry
         self.refresh_at = time.time() + data["expires_in"] - 300
-        print("Twitch token refreshed")
+        logging.info("Twitch token refreshed")
 
     def get_token(self):
         if self.token is None or time.time() >= self.refresh_at:
@@ -51,19 +57,24 @@ class TwitchClient:
 
     def get_stream_info_from_api(self, id: str) -> StreamInfo | None:
         token = self.get_token()
-        print(id)
+        logging.info(f"Using Twitch Client-ID: {id}")
         headers: Mapping[str, str] = {
             "Client-ID": id,
             "Authorization": f"Bearer {token}",
         }
 
-        response = requests.get(
-            "https://api.twitch.tv/helix/streams",
-            params={"user_login": Config.TWITCH_CHANNEL},
-            headers=headers,
-            timeout=30,
-        )
-        response.raise_for_status()
+        try:
+            response = requests.get(
+                "https://api.twitch.tv/helix/streams",
+                params={"user_login": Config.TWITCH_CHANNEL},
+                headers=headers,
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException:
+            logging.warning("Twitch API request failed", exc_info=True)
+            return None
+
         payload: StreamsApiResponse = response.json()
         if not payload["data"]:
             return None
@@ -78,30 +89,35 @@ class TwitchClient:
 
         magic variables for request headers and body copied from https://github.com/Brisppy/twitch-archiver/blob/ee1093d5e6ef9fbb9a7d0dbac5dd02ae963344eb/twitcharchiver/channel.py#L153-L166
         """
-        response = requests.post(
-            "https://gql.twitch.tv/gql",
-            headers={"Client-Id": "ue6666qo983tsx6so1t0vnawi233wa"},
-            json=[
-                {
-                    "extensions": {
-                        "persistedQuery": {
-                            "sha256Hash": "e1edae8122517d013405f237ffcc124515dc6ded82480a88daef69c83b53ac01",
-                            "version": 1,
-                        }
-                    },
-                    "operationName": "ComscoreStreamingQuery",
-                    "variables": {
-                        "isClip": False,
-                        "channel": f"{Config.TWITCH_CHANNEL}",
-                        "isLive": True,
-                        "clipSlug": "",
-                        "isVodOrCollection": False,
-                        "vodID": "",
-                    },
-                }
-            ],
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                "https://gql.twitch.tv/gql",
+                headers={"Client-Id": "ue6666qo983tsx6so1t0vnawi233wa"},
+                json=[
+                    {
+                        "extensions": {
+                            "persistedQuery": {
+                                "sha256Hash": "e1edae8122517d013405f237ffcc124515dc6ded82480a88daef69c83b53ac01",
+                                "version": 1,
+                            }
+                        },
+                        "operationName": "ComscoreStreamingQuery",
+                        "variables": {
+                            "isClip": False,
+                            "channel": f"{Config.TWITCH_CHANNEL}",
+                            "isLive": True,
+                            "clipSlug": "",
+                            "isVodOrCollection": False,
+                            "vodID": "",
+                        },
+                    }
+                ],
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException:
+            logging.warning("Twitch GraphQL request failed", exc_info=True)
+            return None
+
         payload: ComscoreStreamingQueryResponses = response.json()
         user = payload[0]["data"]["user"]
         if user is not None and user["stream"] is not None:

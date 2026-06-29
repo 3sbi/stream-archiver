@@ -7,7 +7,13 @@ from app.uploader import uploader
 from app.recorder import recorder
 from app.health import start_health_server, heartbeat
 
-logging.basicConfig(level=logging.INFO, force=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
+)
 
 
 def main():
