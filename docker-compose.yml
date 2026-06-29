@@ -16,9 +16,9 @@ services:
     ports:
       - "8081:8081"
 
-  twitch-recorder:
+  stream-archiver:
     build: .
-    container_name: twitch-recorder
+    container_name: stream-archiver
     restart: unless-stopped
     env_file:
       - .env
