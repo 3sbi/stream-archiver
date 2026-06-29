@@ -10,6 +10,8 @@ class Config:
     TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
     TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 
+    KICK_CHANNEL = os.getenv("KICK_CHANNEL", "")
+
     TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
     TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
     TELEGRAM_API_ID = int(os.environ["TELEGRAM_API_ID"])

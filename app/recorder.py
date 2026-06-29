@@ -17,8 +17,9 @@ from app.health import heartbeat
 
 
 class Recorder:
-    def __init__(self) -> None:
+    def __init__(self, file_prefix: str) -> None:
         Path(Config.SEGMENTS_DIR).mkdir(parents=True, exist_ok=True)
+        self.file_prefix = file_prefix
         self.running: bool = False
         self.current_session: Optional[str] = None
         self.current_title: Optional[str] = None
@@ -40,7 +41,7 @@ class Recorder:
         self.current_title = title
         self.started_at = started_at
         self.current_session = datetime.now(timezone.utc).strftime(
-            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
+            f"{self.file_prefix}_%Y-%m-%dT%H:%M:%S"
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(
@@ -157,6 +158,3 @@ class Recorder:
         if ended:
             caption += "\n🏁 Stream ended"
         return caption[:1024]
-
-
-recorder = Recorder()

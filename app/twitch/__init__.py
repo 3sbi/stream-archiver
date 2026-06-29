@@ -1,7 +1,6 @@
 import time
 import requests
 from typing import Mapping
-from dataclasses import dataclass
 
 from app.twitch.types import (
     ComscoreStreamingQueryResponses,
@@ -9,12 +8,7 @@ from app.twitch.types import (
     StreamsApiResponse,
 )
 from app.config import Config
-
-
-@dataclass
-class StreamInfo:
-    title: str
-    startedAt: str
+from app.types import StreamInfo
 
 
 class TwitchClient:
