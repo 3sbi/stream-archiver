@@ -71,6 +71,9 @@ class TwitchClient:
                 timeout=30,
             )
             response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            logging.warning("Twitch API connection failed (network/DNS error)", exc_info=True)
+            raise
         except requests.exceptions.RequestException:
             logging.warning("Twitch API request failed", exc_info=True)
             return None
@@ -115,6 +118,9 @@ class TwitchClient:
                 ],
             )
             response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            logging.warning("Twitch GraphQL connection failed (network/DNS error)", exc_info=True)
+            raise
         except requests.exceptions.RequestException:
             logging.warning("Twitch GraphQL request failed", exc_info=True)
             return None
