@@ -31,33 +31,37 @@ class TelegramSender:
 
     def _generate_thumbnail(self, video_path: str) -> str | None:
         watermark_text: str = Config.TELEGRAM_WATERMARK_TEXT
-        if not watermark_text:
-            return None
 
         if not shutil.which("ffmpeg"):
-            logging.error("ffmpeg not found, cannot generate watermark thumbnail")
+            logging.error("ffmpeg not found, cannot generate thumbnail")
             return None
 
         if not os.path.isfile(video_path):
-            logging.error(f"Video file not found for watermark: {video_path}")
+            logging.error(f"Video file not found for thumbnail: {video_path}")
             return None
 
-        logging.info(f"Adding watermark '{watermark_text}' for video {video_path}")
+        if watermark_text:
+            logging.info(f"Generating thumbnail with watermark '{watermark_text}' for video {video_path}")
+        else:
+            logging.info(f"Generating thumbnail for video {video_path}")
+
         thumb_dir = Path(tempfile.gettempdir()) / "video_thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
         thumb_path = str(thumb_dir / f"{Path(video_path).stem}.jpg")
-        watermark_filter = (
-            f"scale='min(640,iw)':'min(360,ih)':force_original_aspect_ratio=decrease,"
-            f"drawtext="
-            f"text='{watermark_text}':"
-            f"x=20:"
-            f"y=h-text_h-20:"
-            f"fontsize=60:"
-            f"fontcolor=white:"
-            f"borderw=2:"
-            f"bordercolor=black,"
-            f"format=yuv420p"
-        )
+
+        vf = "scale='min(640,iw)':'min(360,ih)':force_original_aspect_ratio=decrease"
+        if watermark_text:
+            vf += (
+                f",drawtext="
+                f"text='{watermark_text}':"
+                f"x=20:"
+                f"y=h-text_h-20:"
+                f"fontsize=60:"
+                f"fontcolor=white:"
+                f"borderw=2:"
+                f"bordercolor=black"
+            )
+        vf += ",format=yuv420p"
 
         cmd = [
             "ffmpeg",
@@ -70,7 +74,7 @@ class TelegramSender:
             "-i",
             video_path,
             "-vf",
-            watermark_filter,
+            vf,
             "-vframes",
             "1",
             "-q:v",
@@ -130,7 +134,7 @@ class TelegramSender:
                     url=f"{self.base_url}/sendVideo",
                     data=data,
                     files=files,
-                    timeout=7200,
+                    timeout=360,
                 )
                 logging.info("Telegram upload finished")
                 response.raise_for_status()
@@ -157,7 +161,7 @@ class TelegramSender:
                 f"{self.base_url}/sendDocument",
                 data=data,
                 files=files,
-                timeout=7200,
+                timeout=360,
             )
             response.raise_for_status()
             payload: TelegramResponse = response.json()
