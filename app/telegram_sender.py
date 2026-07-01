@@ -136,7 +136,7 @@ class TelegramSender:
                     url=f"{self.base_url}/sendVideo",
                     data=data,
                     files=files,
-                    timeout=360,
+                    timeout=(30, 1800),
                 )
                 logging.info("Telegram upload finished")
                 response.raise_for_status()
@@ -163,7 +163,7 @@ class TelegramSender:
                 f"{self.base_url}/sendDocument",
                 data=data,
                 files=files,
-                timeout=360,
+                timeout=(30, 1800),
             )
             response.raise_for_status()
             payload: TelegramResponse = response.json()
