@@ -26,7 +26,7 @@ logging.basicConfig(
 
 
 def main():
-    logging.info(f"Watching Twitch channel: {Config.TWITCH_CHANNEL}")
+    logging.info(f"🟣Watching Twitch channel: {Config.TWITCH_CHANNEL}")
     logging.info(
         "Config: "
         f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
@@ -49,13 +49,13 @@ def main():
             info = twitch.get_stream_info()
             # Stream just started
             if info is not None and not stream_live:
-                logging.info("STREAM LIVE DETECTED")
+                logging.info("🚀 LIVE STREAM DETECTED")
                 recorder.start_recording(url, info.title, info.startedAt)
                 stream_live = True
 
             # Stream ended
             elif info is None and stream_live:
-                logging.info("STREAM ENDED")
+                logging.info("🏁 LIVE STREAM ENDED")
                 recorder.stop_recording()
                 stream_live = False
 
