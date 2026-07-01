@@ -41,7 +41,9 @@ class TelegramSender:
             return None
 
         if watermark_text:
-            logging.info(f"Generating thumbnail with watermark '{watermark_text}' for video {video_path}")
+            logging.info(
+                f"Generating thumbnail with watermark '{watermark_text}' for video {video_path}"
+            )
         else:
             logging.info(f"Generating thumbnail for video {video_path}")
 
@@ -167,7 +169,6 @@ class TelegramSender:
             payload: TelegramResponse = response.json()
             return payload["result"]
 
-
     def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
         delay = 10
         max_retries = 5
@@ -183,10 +184,11 @@ class TelegramSender:
                         return self._upload_document(file_path, caption)
                 else:
                     return self._upload_document(file_path, caption)
+            except requests.exceptions.ReadTimeout:
+                logging.warning("Telegram upload timed out, retrying...")
             except Exception:
                 logging.exception(
-                    f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)",
-                    exc_info=True,
+                    f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)

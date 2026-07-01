@@ -36,7 +36,7 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.RequestException:
-            logging.warning("Twitch token refresh failed", exc_info=True)
+            logging.warning("Twitch token refresh failed")
             return
 
         data: AuthResponse = response.json()
@@ -72,10 +72,10 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            logging.warning("Twitch API connection failed (network/DNS error)", exc_info=True)
+            logging.warning("Twitch API connection failed (network/DNS error)")
             raise
         except requests.exceptions.RequestException:
-            logging.warning("Twitch API request failed", exc_info=True)
+            logging.warning("Twitch API request failed")
             return None
 
         payload: StreamsApiResponse = response.json()
@@ -119,10 +119,10 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            logging.warning("Twitch GraphQL connection failed (network/DNS error)", exc_info=True)
+            logging.warning("Twitch GraphQL connection failed (network/DNS error)")
             raise
         except requests.exceptions.RequestException:
-            logging.warning("Twitch GraphQL request failed", exc_info=True)
+            logging.warning("Twitch GraphQL request failed")
             return None
 
         payload: ComscoreStreamingQueryResponses = response.json()
