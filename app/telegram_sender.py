@@ -47,7 +47,7 @@ class TelegramSender:
         thumb_dir.mkdir(parents=True, exist_ok=True)
         thumb_path = str(thumb_dir / f"{Path(video_path).stem}.jpg")
         watermark_filter = (
-            f"scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease,"
+            f"scale='min(640,iw)':'min(360,ih)':force_original_aspect_ratio=decrease,"
             f"drawtext="
             f"text='{watermark_text}':"
             f"x=20:"
