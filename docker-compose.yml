@@ -16,7 +16,7 @@ services:
     ports:
       - "8081:8081"
 
-  stream-archiver:
+  script:
     build: .
     container_name: stream-archiver
     restart: unless-stopped
