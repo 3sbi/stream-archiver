@@ -125,12 +125,14 @@ class TelegramSender:
                     data["thumbnail"] = "attach://thumbnail"
                     thumb_fh = open(thumb_path, "rb")
                     files["thumbnail"] = ("thumb.jpg", thumb_fh, "image/jpeg")
+                logging.info("Starting Telegram upload")
                 response = requests.post(
                     url=f"{self.base_url}/sendVideo",
                     data=data,
                     files=files,
                     timeout=7200,
                 )
+                logging.info("Telegram upload finished")
                 response.raise_for_status()
                 payload: TelegramResponse = response.json()
                 return payload["result"]

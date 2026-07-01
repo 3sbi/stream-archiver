@@ -6,12 +6,21 @@ from app.twitch import twitch
 from app.uploader import uploader
 from app.recorder import recorder
 from app.health import start_health_server, heartbeat
+import signal
+from types import FrameType
 
+
+def handler(signum: int, _frame: FrameType | None) -> None:
+    logging.warning("Received signal %s", signum)
+
+
+signal.signal(signal.SIGTERM, handler)
+signal.signal(signal.SIGINT, handler)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S %z",
     force=True,
 )
 
