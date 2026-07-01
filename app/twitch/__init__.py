@@ -93,6 +93,7 @@ class TwitchClient:
             response = requests.post(
                 "https://gql.twitch.tv/gql",
                 headers={"Client-Id": "ue6666qo983tsx6so1t0vnawi233wa"},
+                timeout=30,
                 json=[
                     {
                         "extensions": {

@@ -21,8 +21,8 @@ class Config:
 
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))
-    DB_PATH = os.getenv("DB_PATH", "data/recorder.db")
-    SEGMENTS_DIR = os.getenv("SEGMENTS_DIR", "data/segments")
+    DB_PATH = os.getenv("DB_PATH", "/data/recorder.db")
+    SEGMENTS_DIR = os.getenv("SEGMENTS_DIR", "/data/segments")
 
     # Default segment duration is chosen empirically.
     # Each segment should be as large as possible without exceeding the 2 GiB limit of Telegram uploads.
