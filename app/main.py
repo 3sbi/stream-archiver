@@ -7,7 +7,34 @@ from app.uploader import uploader
 from app.recorder import recorder
 from app.health import start_health_server, heartbeat
 import signal
+import os
+import psutil
 from types import FrameType
+
+
+def log_memory():
+    proc = psutil.Process(os.getpid())
+
+    total = proc.memory_info().rss
+    logging.info(
+        "Python: %.1f MB",
+        total / 1024 / 1024,
+    )
+
+    for child in proc.children(recursive=True):
+        try:
+            rss = child.memory_info().rss
+            total += rss
+            logging.info(
+                "  %s (pid=%d): %.1f MB",
+                child.name(),
+                child.pid,
+                rss / 1024 / 1024,
+            )
+        except psutil.NoSuchProcess:
+            pass
+
+    logging.info("Total (Python + children): %.1f MB", total / 1024 / 1024)
 
 
 def handler(signum: int, _frame: FrameType | None) -> None:
@@ -46,6 +73,7 @@ def main():
     while True:
         try:
             heartbeat()
+            log_memory()
             info = twitch.get_stream_info()
             # Stream just started
             if info is not None and not stream_live:
