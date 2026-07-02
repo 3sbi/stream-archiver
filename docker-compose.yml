@@ -18,7 +18,6 @@ services:
 
   script:
     build: .
-    container_name: stream-archiver
     restart: unless-stopped
     env_file:
       - .env
@@ -28,6 +27,6 @@ services:
       - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
-      interval: 30s
+      interval: 60s
       timeout: 5s
       retries: 3
