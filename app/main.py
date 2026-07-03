@@ -44,7 +44,7 @@ signal.signal(signal.SIGTERM, handler)
 signal.signal(signal.SIGINT, handler)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S %z",
     force=True,

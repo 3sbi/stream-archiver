@@ -31,3 +31,4 @@ class Config:
     SEGMENT_TIME = int(os.getenv("SEGMENT_TIME", "2630"))
 
     TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
