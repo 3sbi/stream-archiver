@@ -16,7 +16,7 @@ def log_memory():
     proc = psutil.Process(os.getpid())
 
     total = proc.memory_info().rss
-    logging.info(
+    logging.debug(
         "Python: %.1f MB",
         total / 1024 / 1024,
     )
@@ -25,7 +25,7 @@ def log_memory():
         try:
             rss = child.memory_info().rss
             total += rss
-            logging.info(
+            logging.debug(
                 "  %s (pid=%d): %.1f MB",
                 child.name(),
                 child.pid,
@@ -34,7 +34,7 @@ def log_memory():
         except psutil.NoSuchProcess:
             pass
 
-    logging.info("Total (Python + children): %.1f MB", total / 1024 / 1024)
+    logging.debug("Total (Python + children): %.1f MB", total / 1024 / 1024)
 
 
 def handler(signum: int, _frame: FrameType | None) -> None:
@@ -45,7 +45,7 @@ signal.signal(signal.SIGTERM, handler)
 signal.signal(signal.SIGINT, handler)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S %z",
     force=True,
@@ -53,8 +53,8 @@ logging.basicConfig(
 
 
 def main():
-    logging.info(f"🟣Watching Twitch channel: {Config.TWITCH_CHANNEL}")
-    logging.info(
+    logging.info(f"🟣 Watching Twitch channel: {Config.TWITCH_CHANNEL}")
+    logging.debug(
         "Config: "
         f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
         f"segment_time={Config.SEGMENT_TIME}s, "
