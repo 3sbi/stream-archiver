@@ -71,8 +71,6 @@ class Recorder:
             f"{Config.SEGMENT_TIME}",
             "-reset_timestamps",
             "1",
-            "-metadata",
-            f"duration={Config.SEGMENT_TIME}",
             "-segment_format",
             "mp4",
             segment_pattern,
