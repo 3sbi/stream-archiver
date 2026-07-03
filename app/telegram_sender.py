@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import logging
 import requests
-from typing import BinaryIO, TypedDict, NotRequired
+from typing import TypedDict, NotRequired
 from pathlib import Path
 from app.config import Config
 
@@ -117,57 +117,36 @@ class TelegramSender:
 
     def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
         logging.info("Uploading segment as a video...")
-        thumb_path = self._generate_thumbnail(file_path)
-        thumb_fh = None
-        try:
-            with open(file_path, "rb") as file:
-                files: dict[str, BinaryIO | tuple[str, BinaryIO, str]] = {"video": file}
-                data: dict[str, object] = {
-                    "chat_id": Config.TELEGRAM_CHANNEL_ID,
-                    "caption": caption,
-                    "supports_streaming": True,
-                }
-                if thumb_path:
-                    data["thumbnail"] = "attach://thumbnail"
-                    thumb_fh = open(thumb_path, "rb")
-                    files["thumbnail"] = ("thumb.jpg", thumb_fh, "image/jpeg")
-                logging.info("Starting Telegram upload")
-                response = requests.post(
-                    url=f"{self.base_url}/sendVideo",
-                    data=data,
-                    files=files,
-                    timeout=(30, 1800),
-                )
-                logging.info("Telegram upload finished")
-                response.raise_for_status()
-                payload: TelegramResponse = response.json()
-                return payload["result"]
-        finally:
-            if thumb_fh:
-                thumb_fh.close()
-            if thumb_path:
-                try:
-                    os.remove(thumb_path)
-                except OSError:
-                    pass
+        data: dict[str, object] = {
+            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "caption": caption,
+            "video": f"file://{file_path}",
+            "supports_streaming": True,
+        }
+        response = requests.post(
+            url=f"{self.base_url}/sendVideo",
+            data=data,
+            timeout=(30, 1800),
+        )
+        response.raise_for_status()
+        payload: TelegramResponse = response.json()
+        return payload["result"]
 
     def _upload_document(self, file_path: str, caption: str):
         logging.info("Uploading segment as a document...")
-        with open(file_path, "rb") as f:
-            files: dict[str, BinaryIO | tuple[str, BinaryIO, str]] = {"document": f}
-            data: dict[str, object] = {
-                "chat_id": Config.TELEGRAM_CHANNEL_ID,
-                "caption": caption,
-            }
-            response = requests.post(
-                f"{self.base_url}/sendDocument",
-                data=data,
-                files=files,
-                timeout=(30, 1800),
-            )
-            response.raise_for_status()
-            payload: TelegramResponse = response.json()
-            return payload["result"]
+        data: dict[str, object] = {
+            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "caption": caption,
+            "document": f"file://{file_path}",
+        }
+        response = requests.post(
+            f"{self.base_url}/sendDocument",
+            data=data,
+            timeout=(30, 1800),
+        )
+        response.raise_for_status()
+        payload: TelegramResponse = response.json()
+        return payload["result"]
 
     def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
         delay = 10
