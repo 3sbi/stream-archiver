@@ -5,7 +5,6 @@ import logging
 from typing import Callable
 from .database import db
 from .telegram_sender import telegram
-from .health import heartbeat
 
 
 class UploadWorker:
@@ -30,7 +29,6 @@ class UploadWorker:
 
     def _worker(self) -> None:
         while True:
-            heartbeat()
             file_path, caption, callback = self.queue.get()
             success = False
             try:
@@ -40,7 +38,6 @@ class UploadWorker:
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     self.queue.task_done()
-                    heartbeat()
                     continue
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
@@ -61,7 +58,6 @@ class UploadWorker:
                 except Exception:
                     pass
             self.queue.task_done()
-            heartbeat()
 
 
 uploader: UploadWorker = UploadWorker()

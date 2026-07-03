@@ -5,7 +5,6 @@ from app.config import Config
 from app.twitch import twitch
 from app.uploader import uploader
 from app.recorder import recorder
-from app.health import start_health_server, heartbeat
 import signal
 import os
 import psutil
@@ -63,7 +62,6 @@ def main():
         f"timezone={Config.TIMEZONE}, "
         f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
     )
-    start_health_server()
     uploader.start()
     stream_live: bool = False
 
@@ -72,7 +70,6 @@ def main():
 
     while True:
         try:
-            heartbeat()
             log_memory()
             info = twitch.get_stream_info()
             # Stream just started

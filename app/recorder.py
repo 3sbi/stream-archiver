@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 from app.uploader import uploader
 from app.config import Config
 from app.database import db
-from app.health import heartbeat
 
 
 class Recorder:
@@ -117,7 +116,6 @@ class Recorder:
 
         while self.running:
             try:
-                heartbeat()
                 files = sorted(
                     Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4")
                 )
