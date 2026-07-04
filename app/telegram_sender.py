@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import logging
 import requests
-from typing import TypedDict, NotRequired
+from typing import BinaryIO, TypedDict, NotRequired
 from pathlib import Path
 from app.config import Config
 
@@ -80,7 +80,7 @@ class TelegramSender:
             "-vframes",
             "1",
             "-q:v",
-            "2",
+            "4",
             thumb_path,
         ]
 
@@ -123,14 +123,32 @@ class TelegramSender:
             "video": f"file://{file_path}",
             "supports_streaming": True,
         }
-        response = requests.post(
-            url=f"{self.base_url}/sendVideo",
-            data=data,
-            timeout=(30, 1800),
-        )
-        response.raise_for_status()
-        payload: TelegramResponse = response.json()
-        return payload["result"]
+        files: dict[str, tuple[str, BinaryIO, str]] = {}
+        thumb_path = self._generate_thumbnail(file_path)
+        thumb_fh: BinaryIO | None = None
+        if thumb_path:
+            data["thumbnail"] = "attach://thumbnail"
+            thumb_fh = open(thumb_path, "rb")
+            files["thumbnail"] = ("thumb.jpg", thumb_fh, "image/jpeg")
+
+        try:
+            response = requests.post(
+                url=f"{self.base_url}/sendVideo",
+                data=data,
+                timeout=(30, 1800),
+                files=files,
+            )
+            response.raise_for_status()
+            payload: TelegramResponse = response.json()
+            return payload["result"]
+        finally:
+            if thumb_fh:
+                thumb_fh.close()
+            if thumb_path:
+                try:
+                    os.remove(thumb_path)
+                except OSError:
+                    pass
 
     def _upload_document(self, file_path: str, caption: str):
         logging.info("Uploading segment as a document...")
