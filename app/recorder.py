@@ -36,6 +36,7 @@ class Recorder:
 
     def start_recording(self, url: str, title: str, started_at: str):
         self.check_disk_space()
+        uploader.reset_thread_anchor()
         self.current_title = title
         self.started_at = started_at
         self.current_session = datetime.now(timezone.utc).strftime(
@@ -114,9 +115,7 @@ class Recorder:
 
         while self.running:
             try:
-                files = sorted(
-                    Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4")
-                )
+                files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
                 # Upload completed files, skipping any modified within the last
                 # segment duration (ffmpeg may still be writing them).
                 now = time.time()

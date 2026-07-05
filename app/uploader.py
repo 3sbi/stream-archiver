@@ -13,9 +13,13 @@ class UploadWorker:
             queue.Queue()
         )
         self.thread = threading.Thread(target=self._worker, daemon=True)
+        self._first_message_id: int | None = None
 
     def start(self) -> None:
         self.thread.start()
+
+    def reset_thread_anchor(self) -> None:
+        self._first_message_id = None
 
     def enqueue(
         self,
@@ -41,9 +45,11 @@ class UploadWorker:
                     continue
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
-                result = telegram.upload(file_path, caption)
+                result = telegram.upload(file_path, caption, self._first_message_id)
                 if result:
                     message_id = telegram.get_message_id(result)
+                    if self._first_message_id is None and message_id is not None:
+                        self._first_message_id = message_id
                     logging.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
                     if os.path.exists(file_path):

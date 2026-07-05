@@ -115,7 +115,9 @@ class TelegramSender:
             logging.exception("Unexpected error generating watermark thumbnail")
             return None
 
-    def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
+    def _upload_video(
+        self, file_path: str, caption: str, reply_to_message_id: int | None = None
+    ) -> TelegramMessage:
         logging.info("Uploading segment as a video...")
         data: dict[str, object] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
@@ -123,6 +125,8 @@ class TelegramSender:
             "video": f"file://{file_path}",
             "supports_streaming": True,
         }
+        if reply_to_message_id is not None:
+            data["reply_to_message_id"] = reply_to_message_id
         files: dict[str, tuple[str, BinaryIO, str]] = {}
         thumb_path = self._generate_thumbnail(file_path)
         thumb_fh: BinaryIO | None = None
@@ -150,13 +154,17 @@ class TelegramSender:
                 except OSError:
                     pass
 
-    def _upload_document(self, file_path: str, caption: str):
+    def _upload_document(
+        self, file_path: str, caption: str, reply_to_message_id: int | None = None
+    ):
         logging.info("Uploading segment as a document...")
         data: dict[str, object] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
             "caption": caption,
             "document": f"file://{file_path}",
         }
+        if reply_to_message_id is not None:
+            data["reply_to_message_id"] = reply_to_message_id
         response = requests.post(
             f"{self.base_url}/sendDocument",
             data=data,
@@ -166,21 +174,29 @@ class TelegramSender:
         payload: TelegramResponse = response.json()
         return payload["result"]
 
-    def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
+    def upload(
+        self, file_path: str, caption: str, reply_to_message_id: int | None = None
+    ) -> TelegramMessage | None:
         delay = 10
         max_retries = 5
         for attempt in range(max_retries):
             try:
                 if Config.TELEGRAM_UPLOAD_MODE == "video":
                     try:
-                        return self._upload_video(file_path, caption)
+                        return self._upload_video(
+                            file_path, caption, reply_to_message_id
+                        )
                     except Exception:
                         logging.exception(
                             "Video upload failed, fallback to document", exc_info=True
                         )
-                        return self._upload_document(file_path, caption)
+                        return self._upload_document(
+                            file_path, caption, reply_to_message_id
+                        )
                 else:
-                    return self._upload_document(file_path, caption)
+                    return self._upload_document(
+                        file_path, caption, reply_to_message_id
+                    )
             except requests.exceptions.ReadTimeout:
                 logging.warning("Telegram upload timed out, retrying...")
             except Exception:
