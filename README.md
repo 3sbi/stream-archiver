@@ -1,6 +1,8 @@
 # Twitch to Telegram archiver
 
-Records Twitch streams live and uploads them to a Telegram channel.
+This script detects when a live stream begins, records it in real time, and archives the recorded segments in a Telegram channel. 
+
+Optimized for and tested on low-spec machine (i.e. VPS with 1 GiB RAM and 1 vCPU), requires no more than 220Mb.
 
 ## Setup
 
