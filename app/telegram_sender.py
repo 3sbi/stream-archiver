@@ -30,6 +30,8 @@ class TelegramSender:
         self.base_url: str = f"{Config.TELEGRAM_API_URL}/bot{Config.TELEGRAM_BOT_TOKEN}"
 
     def _generate_thumbnail(self, video_path: str) -> str | None:
+        watermark_text: str = Config.TELEGRAM_WATERMARK_TEXT
+
         if not shutil.which("ffmpeg"):
             logging.error("ffmpeg not found, cannot generate thumbnail")
             return None
@@ -38,11 +40,30 @@ class TelegramSender:
             logging.error(f"Video file not found for thumbnail: {video_path}")
             return None
 
-        logging.info(f"Generating thumbnail for video {video_path}")
+        if watermark_text:
+            logging.info(
+                f"Generating thumbnail with watermark '{watermark_text}' for video {video_path}"
+            )
+        else:
+            logging.info(f"Generating thumbnail for video {video_path}")
 
         thumb_dir = Path(tempfile.gettempdir()) / "video_thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
         thumb_path = str(thumb_dir / f"{Path(video_path).stem}.jpg")
+
+        vf_parts: list[str] = []
+        if watermark_text:
+            vf_parts.append(
+                f"drawtext="
+                f"text='{watermark_text}':"
+                f"x=20:"
+                f"y=h-text_h-20:"
+                f"fontsize=60:"
+                f"fontcolor=white:"
+                f"borderw=2:"
+                f"bordercolor=black"
+            )
+        vf_parts.append("format=yuv420p")
 
         cmd = [
             "ffmpeg",
@@ -54,6 +75,8 @@ class TelegramSender:
             "5",
             "-i",
             video_path,
+            "-vf",
+            ",".join(vf_parts),
             "-vframes",
             "1",
             "-q:v",
@@ -66,10 +89,17 @@ class TelegramSender:
             result = subprocess.run(cmd, capture_output=True, timeout=40, check=False)
             if result.returncode != 0:
                 stderr = result.stderr.decode("utf-8", errors="replace")
-                logging.warning(
-                    f"ffmpeg thumbnail failed (exit code {result.returncode}): "
-                    f"{stderr.strip()}"
-                )
+                if "font" in stderr.lower():
+                    logging.warning(
+                        "Font-related error in ffmpeg watermark. "
+                        "Ensure fonts-dejavu-core (or similar) is installed. "
+                        f"ffmpeg stderr: {stderr.strip()}"
+                    )
+                else:
+                    logging.warning(
+                        f"ffmpeg thumbnail failed (exit code {result.returncode}): "
+                        f"{stderr.strip()}"
+                    )
                 return None
             if os.path.getsize(thumb_path) > 0:
                 return thumb_path
@@ -77,7 +107,8 @@ class TelegramSender:
             return None
         except subprocess.TimeoutExpired:
             logging.warning(
-                f"ffmpeg thumbnail timed out after 40s for {video_path}."
+                f"ffmpeg thumbnail timed out after 40s for {video_path}. "
+                "The video file may be corrupted or the drawtext filter hung."
             )
             return None
         except Exception:
