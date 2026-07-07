@@ -86,6 +86,7 @@ def main():
 
             # Stream still live
             elif info is not None and stream_live:
+                recorder.update_title(info.title)
                 # Detect unexpected recorder crash
                 if recorder.ffmpeg is not None and recorder.ffmpeg.poll() is not None:
                     logging.info("FFMPEG EXITED UNEXPECTEDLY")

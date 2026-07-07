@@ -82,6 +82,12 @@ class Recorder:
         threading.Thread(target=self.segment_watcher, daemon=True).start()
         logging.info(f"Recording started: {title}")
 
+    def update_title(self, title: str) -> None:
+        if self.current_title != title and self.current_session:
+            logging.info(f"Stream title changed: \"{self.current_title}\" → \"{title}\"")
+            self.current_title = title
+            db.update_title(self.current_session, title)
+
     def stop_recording(self) -> None:
         self.running = False
         if self.streamlink:

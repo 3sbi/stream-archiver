@@ -53,6 +53,18 @@ class Database:
         )
         self.conn.commit()
 
+    def update_title(self, session_id: str, title: str):
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+        UPDATE streams
+        SET title=?
+        WHERE session_id=?
+        """,
+            (title, session_id),
+        )
+        self.conn.commit()
+
     def finish_stream(self, session_id: str, ended_at: str):
         cur = self.conn.cursor()
         cur.execute(
