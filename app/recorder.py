@@ -11,7 +11,6 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from app.uploader import uploader
-from app.telegram_sender import telegram
 from app.config import Config
 from app.database import db
 
@@ -221,32 +220,7 @@ class Recorder:
     ) -> None:
         if not batch:
             return
-
-        result = telegram.upload_media_group(
-            batch,
-            reply_to_message_id=uploader.first_message_id,
-        )
-
-        if result:
-            first_id = telegram.get_message_id(result[0])
-            if uploader.first_message_id is None and first_id is not None:
-                uploader.first_message_id = first_id
-
-            for i, (file_path, _) in enumerate(batch):
-                filename = os.path.basename(file_path)
-                msg_id = (
-                    telegram.get_message_id(result[i])
-                    if i < len(result)
-                    else None
-                )
-                db.mark_uploaded(filename, msg_id)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                uploaded.add(file_path)
-        else:
-            logging.error(
-                "Failed to upload media group, %d files left on disk", len(batch)
-            )
+        uploaded.update(uploader.upload_group(batch))
 
     def _upload_remaining_group(
         self, uploaded: set[str], session: str | None = None

@@ -29,6 +29,35 @@ class UploadWorker:
     def first_message_id(self, value: int | None) -> None:
         self._first_message_id = value
 
+    def upload_group(self, files: list[tuple[str, str]]) -> set[str]:
+        uploaded_set: set[str] = set()
+        if not files:
+            return uploaded_set
+
+        result = telegram.upload_media_group(
+            files,
+            reply_to_message_id=self._first_message_id,
+        )
+
+        if result:
+            first_id = telegram.get_message_id(result[0])
+            if self._first_message_id is None and first_id is not None:
+                self._first_message_id = first_id
+
+            for i, (file_path, _) in enumerate(files):
+                filename = os.path.basename(file_path)
+                msg_id = (
+                    telegram.get_message_id(result[i])
+                    if i < len(result)
+                    else None
+                )
+                db.mark_uploaded(filename, msg_id)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                uploaded_set.add(file_path)
+
+        return uploaded_set
+
     def enqueue(
         self,
         file_path: str,
