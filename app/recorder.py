@@ -31,6 +31,7 @@ class Recorder:
 
     def check_disk_space(self) -> None:
         free = self.free_space_gb()
+        logging.debug(f"Disk space check: {free:.2f}GB free (min={Config.MIN_FREE_DISK_GB}GB)")
         if free < Config.MIN_FREE_DISK_GB:
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
@@ -80,7 +81,7 @@ class Recorder:
         self.ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=self.streamlink.stdout)
         self.running = True
         threading.Thread(target=self.segment_watcher, daemon=True).start()
-        logging.info(f"Recording started: {title}")
+        logging.info(f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}")
 
     def update_title(self, title: str) -> None:
         if self.current_title != title and self.current_session:
@@ -97,13 +98,15 @@ class Recorder:
         try:
             if self.streamlink:
                 self.streamlink.wait(timeout=30)
+                logging.info("streamlink exited (rc=%d)", self.streamlink.returncode)
         except subprocess.TimeoutExpired:
-            pass
+            logging.warning("streamlink did not exit within 30s timeout")
         try:
             if self.ffmpeg:
                 self.ffmpeg.wait(timeout=30)
+                logging.info("ffmpeg exited (rc=%d)", self.ffmpeg.returncode)
         except subprocess.TimeoutExpired:
-            pass
+            logging.warning("ffmpeg did not exit within 30s timeout")
         logging.info("Recording stopped")
 
     def segment_watcher(self) -> None:
@@ -133,6 +136,7 @@ class Recorder:
                         if str(file) in uploaded or str(file) in pending:
                             continue
                     caption = self.build_caption(file.name, ended=False)
+                    logging.debug("segment_watcher: queuing %s for upload", file.name)
                     uploader.enqueue(str(file), caption, on_uploaded)
                     with lock:
                         pending.add(str(file))
@@ -154,13 +158,16 @@ class Recorder:
             session = self.current_session
 
         if self.ffmpeg and self.ffmpeg.poll() is None:
+            logging.debug("upload_remaining: waiting for ffmpeg to finish")
             try:
                 self.ffmpeg.wait(timeout=30)
+                logging.info("upload_remaining: ffmpeg exited (rc=%d)", self.ffmpeg.returncode)
             except subprocess.TimeoutExpired:
-                pass
+                logging.warning("upload_remaining: ffmpeg did not exit within 30s timeout")
         time.sleep(1)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
+        logging.info("upload_remaining: found %d total segments for %s", len(files), session)
 
         def on_uploaded(filename: str, success: bool = False) -> None:
             if success:
@@ -172,6 +179,7 @@ class Recorder:
                 if str(file) not in uploaded and str(file) not in pending:
                     remaining.append(file)
 
+        logging.info("upload_remaining: uploading %d remaining segments", len(remaining))
         for index, file in enumerate(remaining, start=1):
             caption = self.build_caption(
                 file.name,
