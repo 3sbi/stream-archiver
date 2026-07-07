@@ -11,6 +11,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from app.uploader import uploader
+from app.telegram_sender import telegram
 from app.config import Config
 from app.database import db
 
@@ -112,6 +113,14 @@ class Recorder:
     def segment_watcher(self) -> None:
         session = self.current_session
         uploaded = {str(Path(Config.SEGMENTS_DIR) / f) for f in db.get_uploaded_files()}
+        if not session:
+            return 
+        if Config.GROUP_SEGMENTS:
+            self._group_watcher(session, uploaded)
+        else:
+            self._individual_watcher(session, uploaded)
+
+    def _individual_watcher(self, session: str, uploaded: set[str]) -> None:
         pending: set[str] = set()
         lock = threading.Lock()
 
@@ -125,8 +134,6 @@ class Recorder:
         while self.running:
             try:
                 files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
-                # Upload completed files, skipping any modified within the last
-                # segment duration (ffmpeg may still be writing them).
                 now = time.time()
                 for file in files:
                     age = now - file.stat().st_mtime
@@ -136,16 +143,159 @@ class Recorder:
                         if str(file) in uploaded or str(file) in pending:
                             continue
                     caption = self.build_caption(file.name, ended=False)
-                    logging.debug("segment_watcher: queuing %s for upload", file.name)
+                    logging.debug("_individual_watcher: queuing %s for upload", file.name)
                     uploader.enqueue(str(file), caption, on_uploaded)
                     with lock:
                         pending.add(str(file))
                 time.sleep(10)
             except Exception:
-                logging.error("segment_watcher error")
+                logging.error("_individual_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
         self.upload_remaining(uploaded, pending, lock, session=session)
+
+    def _group_watcher(self, session: str, uploaded: set[str]) -> None:
+        group: list[tuple[str, str]] = []
+
+        while self.running:
+            try:
+                self._collect_new_segments_for_group(session, uploaded, group)
+                self._flush_group_if_needed(group, uploaded)
+                time.sleep(10)
+            except Exception:
+                logging.error("_group_watcher error")
+                traceback.print_exc()
+                time.sleep(10)
+
+        self._flush_group_ended(group, uploaded)
+        self._upload_remaining_group(uploaded, session=session)
+
+    def _collect_new_segments_for_group(
+        self, session: str, uploaded: set[str], group: list[tuple[str, str]]
+    ) -> None:
+        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
+        group_paths = {f for f, _ in group}
+        now = time.time()
+        for file in files:
+            file_str = str(file)
+            if file_str in uploaded or file_str in group_paths:
+                continue
+            age = now - file.stat().st_mtime
+            if age < Config.SEGMENT_TIME:
+                continue
+            caption = self.build_caption(file.name, ended=False)
+            group.append((file_str, caption))
+            logging.debug("_group_watcher: collected %s", file.name)
+
+    def _flush_group_if_needed(
+        self, group: list[tuple[str, str]], uploaded: set[str]
+    ) -> None:
+        try:
+            self.check_disk_space()
+        except RuntimeError:
+            logging.warning("Low disk space, flushing collected segments")
+            batch = group[:]
+            group.clear()
+            self._upload_group_batch(batch, uploaded)
+            return
+
+        while len(group) >= 10:
+            batch = group[:10]
+            group[:] = group[10:]
+            self._upload_group_batch(batch, uploaded)
+
+    def _flush_group_ended(
+        self, group: list[tuple[str, str]], uploaded: set[str]
+    ) -> None:
+        if not group:
+            return
+        file_path, caption = group[-1]
+        group[-1] = (file_path, caption + "\n🏁 Stream ended")
+        while group:
+            batch = group[:10]
+            group[:] = group[10:]
+            self._upload_group_batch(batch, uploaded)
+
+    def _upload_group_batch(
+        self, batch: list[tuple[str, str]], uploaded: set[str]
+    ) -> None:
+        if not batch:
+            return
+
+        result = telegram.upload_media_group(
+            batch,
+            reply_to_message_id=uploader.first_message_id,
+        )
+
+        if result:
+            first_id = telegram.get_message_id(result[0])
+            if uploader.first_message_id is None and first_id is not None:
+                uploader.first_message_id = first_id
+
+            for i, (file_path, _) in enumerate(batch):
+                filename = os.path.basename(file_path)
+                msg_id = (
+                    telegram.get_message_id(result[i])
+                    if i < len(result)
+                    else None
+                )
+                db.mark_uploaded(filename, msg_id)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                uploaded.add(file_path)
+        else:
+            logging.error(
+                "Failed to upload media group, %d files left on disk", len(batch)
+            )
+
+    def _upload_remaining_group(
+        self, uploaded: set[str], session: str | None = None
+    ) -> None:
+        if session is None:
+            session = self.current_session
+
+        if self.ffmpeg and self.ffmpeg.poll() is None:
+            logging.debug("_upload_remaining_group: waiting for ffmpeg to finish")
+            try:
+                self.ffmpeg.wait(timeout=30)
+                logging.info(
+                    "_upload_remaining_group: ffmpeg exited (rc=%d)",
+                    self.ffmpeg.returncode,
+                )
+            except subprocess.TimeoutExpired:
+                logging.warning(
+                    "_upload_remaining_group: ffmpeg did not exit within 30s timeout"
+                )
+        time.sleep(1)
+
+        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
+        logging.info(
+            "_upload_remaining_group: found %d total segments for %s",
+            len(files),
+            session,
+        )
+
+        remaining = [str(f) for f in files if str(f) not in uploaded]
+        if not remaining:
+            return
+
+        logging.info(
+            "_upload_remaining_group: uploading %d remaining segments",
+            len(remaining),
+        )
+
+        all_items: list[tuple[str, str]] = []
+        for file_path in remaining:
+            caption = self.build_caption(Path(file_path).name, ended=False)
+            all_items.append((file_path, caption))
+
+        last_path, last_caption = all_items[-1]
+        all_items[-1] = (last_path, last_caption + "\n🏁 Stream ended")
+
+        while all_items:
+            chunk = all_items[:10]
+            all_items = all_items[10:]
+            self._upload_group_batch(chunk, uploaded)
 
     def upload_remaining(
         self,

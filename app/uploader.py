@@ -21,6 +21,14 @@ class UploadWorker:
     def reset_thread_anchor(self) -> None:
         self._first_message_id = None
 
+    @property
+    def first_message_id(self) -> int | None:
+        return self._first_message_id
+
+    @first_message_id.setter
+    def first_message_id(self, value: int | None) -> None:
+        self._first_message_id = value
+
     def enqueue(
         self,
         file_path: str,

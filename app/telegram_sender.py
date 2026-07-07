@@ -1,11 +1,12 @@
 import os
 import time
+import json
 import shutil
 import subprocess
 import tempfile
 import logging
 import requests
-from typing import BinaryIO, TypedDict, NotRequired
+from typing import Any, BinaryIO, TypedDict, NotRequired
 from pathlib import Path
 from app.config import Config
 
@@ -202,6 +203,49 @@ class TelegramSender:
             except Exception:
                 logging.exception(
                     f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 600)
+        return None
+
+    def upload_media_group(
+        self,
+        files: list[tuple[str, str]],
+        reply_to_message_id: int | None = None,
+    ) -> list[TelegramMessage] | None:
+        media: list[dict[str, Any]] = []
+        for file_path, caption in files:
+            item: dict[str, Any] = {
+                "type": "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document",
+                "media": f"file://{file_path}",
+                "caption": caption,
+            }
+            media.append(item)
+
+        data: dict[str, Any] = {
+            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "media": json.dumps(media),
+        }
+        if reply_to_message_id is not None:
+            data["reply_to_message_id"] = reply_to_message_id
+
+        delay = 10
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/sendMediaGroup",
+                    data=data,
+                    timeout=(30, 1800),
+                )
+                response.raise_for_status()
+                return response.json()["result"]
+            except requests.exceptions.ReadTimeout:
+                logging.warning("Telegram media group upload timed out, retrying...")
+            except Exception:
+                logging.exception(
+                    f"Media group upload failed "
+                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
