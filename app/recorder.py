@@ -44,7 +44,7 @@ class Recorder:
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(
-            Config.SEGMENTS_DIR, f"{self.current_session}_%04d.mp4"
+            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
         streamlink_cmd: list[str] = [
             "streamlink",
@@ -180,11 +180,11 @@ class Recorder:
             uploader.enqueue(str(file), caption, on_uploaded)
 
     def build_caption(self, filename: str, ended: bool = False) -> str:
-        part = Path(filename).stem.split("_")[-1]
+        part = str(int(Path(filename).stem.split("_")[-1]) + 1)
         date = datetime.fromisoformat(self.started_at).astimezone(
             ZoneInfo(Config.TIMEZONE)
         )
-        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart {part}"
+        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart №{part}"
         if ended:
             caption += "\n🏁 Stream ended"
         return caption[:1024]
