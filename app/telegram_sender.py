@@ -62,9 +62,11 @@ class TelegramSender:
                 f"fontsize=60:"
                 f"fontcolor=white:"
                 f"borderw=2:"
+                f"shadowx=2:"
+                f"shadowy=2:"
                 f"bordercolor=black"
             )
-        vf_parts.append("format=yuv420p")
+        vf_parts.append("format=rgb24")
 
         cmd = [
             "ffmpeg",
@@ -72,16 +74,16 @@ class TelegramSender:
             "-hide_banner",
             "-loglevel",
             "error",
-            "-ss",
-            "5",
             "-i",
             video_path,
+            "-ss",
+            "5",
             "-vf",
             ",".join(vf_parts),
-            "-vframes",
+            "-frames:v",
             "1",
             "-q:v",
-            "4",
+            "2",
             thumb_path,
         ]
 
