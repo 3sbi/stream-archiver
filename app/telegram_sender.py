@@ -223,8 +223,12 @@ class TelegramSender:
             item: dict[str, str | bool] = {
                 "type": file_type,
                 "media": f"file://{file_path}",
-                "caption": caption,
             }
+
+            # if you add captions to multiple or all items, 
+            # telegram will hide them and only show them when individual media files are tapped
+            if i == 0:
+                item["caption"] = caption
 
             if file_type:
                 item["supports_streaming"] = True
