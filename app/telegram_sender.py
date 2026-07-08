@@ -213,16 +213,20 @@ class TelegramSender:
         files: list[tuple[str, str]],
         reply_to_message_id: int | None = None,
     ) -> list[TelegramMessage] | None:
-        media: list[dict[str, Any]] = []
+        media: list[dict[str, str | bool]] = []
+        file_type = "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
         for file_path, caption in files:
-            item: dict[str, Any] = {
-                "type": "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document",
+            item: dict[str, str | bool] = {
+                "type": file_type,
                 "media": f"file://{file_path}",
                 "caption": caption,
             }
+
+            if file_type:
+                item["supports_streaming"] = True
             media.append(item)
 
-        data: dict[str, Any] = {
+        data: dict[str, str | int] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
             "media": json.dumps(media),
         }
