@@ -44,7 +44,7 @@ class Recorder:
         self.current_title = title
         self.started_at = started_at
         self.current_session = datetime.now(timezone.utc).strftime(
-            f"{Config.TWITCH_CHANNEL}_%Y-%m-%d"
+            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(
