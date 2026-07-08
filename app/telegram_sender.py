@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import logging
 import requests
-from typing import Any, BinaryIO, TypedDict, NotRequired
+from typing import BinaryIO, TypedDict, NotRequired
 from pathlib import Path
 from app.config import Config
 
@@ -214,8 +214,10 @@ class TelegramSender:
         reply_to_message_id: int | None = None,
     ) -> list[TelegramMessage] | None:
         media: list[dict[str, str | bool]] = []
+        upload_files: dict[str, tuple[str, BinaryIO, str]] = {}
+        thumb_paths: list[str] = []
         file_type = "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
-        for file_path, caption in files:
+        for i, (file_path, caption) in enumerate(files):
             item: dict[str, str | bool] = {
                 "type": file_type,
                 "media": f"file://{file_path}",
@@ -224,6 +226,18 @@ class TelegramSender:
 
             if file_type:
                 item["supports_streaming"] = True
+
+            thumb_path = self._generate_thumbnail(file_path)
+            if thumb_path:
+                attach_key = f"thumb{i}"
+                item["thumbnail"] = f"attach://{attach_key}"
+                upload_files[attach_key] = (
+                    f"thumb{i}.jpg",
+                    open(thumb_path, "rb"),
+                    "image/jpeg",
+                )
+                thumb_paths.append(thumb_path)
+
             media.append(item)
 
         data: dict[str, str | int] = {
@@ -241,6 +255,7 @@ class TelegramSender:
                     f"{self.base_url}/sendMediaGroup",
                     data=data,
                     timeout=(30, 1800),
+                    files=upload_files,
                 )
                 response.raise_for_status()
                 return response.json()["result"]
@@ -253,6 +268,12 @@ class TelegramSender:
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
+            finally:
+                for p in thumb_paths:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
         return None
 
     @staticmethod
