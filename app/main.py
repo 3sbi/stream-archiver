@@ -89,7 +89,9 @@ def main():
                 recorder.update_title(info.title)
                 # Detect unexpected recorder crash
                 if recorder.ffmpeg is not None and recorder.ffmpeg.poll() is not None:
-                    logging.info("FFMPEG EXITED UNEXPECTEDLY")
+                    rc = recorder.ffmpeg.returncode
+                    stderr = recorder.ffmpeg.stderr.read().decode(errors="replace") if recorder.ffmpeg.stderr else ""
+                    logging.info("FFMPEG EXITED UNEXPECTEDLY (rc=%d): %s", rc, stderr.strip())
                     recorder.stop_recording()
                     time.sleep(15)
                     recorder.start_recording(url, info.title, info.startedAt)

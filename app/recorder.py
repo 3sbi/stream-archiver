@@ -78,7 +78,7 @@ class Recorder:
             segment_pattern,
         ]
         self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
-        self.ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=self.streamlink.stdout)
+        self.ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=self.streamlink.stdout, stderr=subprocess.PIPE)
         self.running = True
         threading.Thread(target=self.segment_watcher, daemon=True).start()
         logging.info(f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}")
