@@ -28,7 +28,8 @@ class Config:
 
     # Default segment duration is chosen empirically.
     # Each segment should be as large as possible without exceeding the 2 GiB limit of Telegram uploads.
-    # For example, with an average stream bitrate of 6200kbps, a 2630-second segment results in a file size of ~ 1,9 GiB.
+    # For example, with an average stream bitrate of 6200kbps, a
+    #  2630-second 1920x1080 video segment results in a file size of ~ 1,9 GiB.
     # 6_200_000 * 2630 / 8 = 2_038_250_000 bytes ~ 1.9 GiB
     SEGMENT_TIME = int(os.getenv("SEGMENT_TIME", "2630"))
 
