@@ -119,7 +119,7 @@ class TelegramSender:
             return None
 
     def _upload_video(
-        self, file_path: str, caption: str, reply_to_message_id: int | None = None
+        self, file_path: str, caption: str
     ) -> TelegramMessage:
         logging.info("Uploading segment as a video...")
         data: dict[str, object] = {
@@ -128,8 +128,6 @@ class TelegramSender:
             "video": f"file://{file_path}",
             "supports_streaming": True,
         }
-        if reply_to_message_id is not None:
-            data["reply_to_message_id"] = reply_to_message_id
         files: dict[str, tuple[str, BinaryIO, str]] = {}
         thumb_path = self._generate_thumbnail(file_path)
         thumb_fh: BinaryIO | None = None
@@ -158,7 +156,7 @@ class TelegramSender:
                     pass
 
     def _upload_document(
-        self, file_path: str, caption: str, reply_to_message_id: int | None = None
+        self, file_path: str, caption: str
     ):
         logging.info("Uploading segment as a document...")
         data: dict[str, object] = {
@@ -166,8 +164,6 @@ class TelegramSender:
             "caption": caption,
             "document": f"file://{file_path}",
         }
-        if reply_to_message_id is not None:
-            data["reply_to_message_id"] = reply_to_message_id
         response = requests.post(
             f"{self.base_url}/sendDocument",
             data=data,
@@ -177,29 +173,21 @@ class TelegramSender:
         payload: TelegramResponse = response.json()
         return payload["result"]
 
-    def upload(
-        self, file_path: str, caption: str, reply_to_message_id: int | None = None
-    ) -> TelegramMessage | None:
+    def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
         delay = 10
         max_retries = 5
         for attempt in range(max_retries):
             try:
                 if Config.TELEGRAM_UPLOAD_MODE == "video":
                     try:
-                        return self._upload_video(
-                            file_path, caption, reply_to_message_id
-                        )
+                        return self._upload_video(file_path, caption)
                     except Exception:
                         logging.exception(
                             "Video upload failed, fallback to document", exc_info=True
                         )
-                        return self._upload_document(
-                            file_path, caption, reply_to_message_id
-                        )
+                        return self._upload_document(file_path, caption)
                 else:
-                    return self._upload_document(
-                        file_path, caption, reply_to_message_id
-                    )
+                    return self._upload_document(file_path, caption)
             except requests.exceptions.ReadTimeout:
                 logging.warning("Telegram upload timed out, retrying...")
             except Exception:
@@ -213,7 +201,6 @@ class TelegramSender:
     def upload_media_group(
         self,
         files: list[tuple[str, str]],
-        reply_to_message_id: int | None = None,
     ) -> list[TelegramMessage] | None:
         media: list[dict[str, str | bool]] = []
         upload_files: dict[str, tuple[str, BinaryIO, str]] = {}
@@ -225,7 +212,7 @@ class TelegramSender:
                 "media": f"file://{file_path}",
             }
 
-            # if you add captions to multiple or all items, 
+            # if you add captions to multiple or all items,
             # telegram will hide them and only show them when individual media files are tapped
             if i == 0:
                 item["caption"] = caption
@@ -250,9 +237,6 @@ class TelegramSender:
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
             "media": json.dumps(media),
         }
-        if reply_to_message_id is not None:
-            data["reply_to_message_id"] = reply_to_message_id
-
         delay = 10
         max_retries = 5
         for attempt in range(max_retries):
