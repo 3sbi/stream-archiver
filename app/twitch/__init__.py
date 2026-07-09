@@ -124,6 +124,9 @@ class TwitchClient:
         except requests.exceptions.RequestException:
             logging.warning("Twitch GraphQL request failed")
             return None
+        except Exception:
+            logging.warning("Something went wrong while fetching Twitch GraphQL")
+            return None
 
         payload: ComscoreStreamingQueryResponses = response.json()
         user = payload[0]["data"]["user"]
