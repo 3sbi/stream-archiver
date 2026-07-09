@@ -58,7 +58,7 @@ class Recorder:
             "0",
             "--stdout",
             url,
-            "720p,720p48,720p60,best",
+            "best",
         ]
 
         ffmpeg_cmd = [
