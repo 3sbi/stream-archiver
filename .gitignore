@@ -3,3 +3,4 @@
 __pycache__
 data
 telegram-bot-api-data
+.ruff_cache

@@ -5,10 +5,8 @@ from app.config import Config
 from app.twitch import twitch
 from app.uploader import uploader
 from app.recorder import recorder
-import signal
 import os
 import psutil
-from types import FrameType
 
 
 def log_memory():
@@ -35,13 +33,6 @@ def log_memory():
 
     logging.debug("Total (Python + children): %.1f MB", total / 1024 / 1024)
 
-
-def handler(signum: int, _frame: FrameType | None) -> None:
-    logging.warning("Received signal %s", signum)
-
-
-signal.signal(signal.SIGTERM, handler)
-signal.signal(signal.SIGINT, handler)
 
 logging.basicConfig(
     level=getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO),
@@ -88,13 +79,15 @@ def main():
             elif info is not None and stream_live:
                 recorder.update_title(info.title)
                 # Detect unexpected recorder crash
-                if recorder.ffmpeg is not None and recorder.ffmpeg.poll() is not None:
-                    rc = recorder.ffmpeg.returncode
-                    stderr = recorder.ffmpeg.stderr.read().decode(errors="replace") if recorder.ffmpeg.stderr else ""
-                    logging.info("FFMPEG EXITED UNEXPECTEDLY (rc=%d): %s", rc, stderr.strip())
+                if recorder.streamlink and recorder.streamlink.poll() is not None:
+                    streamlink_rc = recorder.streamlink.returncode
+                    logging.warning("Streamlink exited (rc=%d)", streamlink_rc)
                     recorder.stop_recording()
-                    time.sleep(15)
-                    recorder.start_recording(url, info.title, info.startedAt)
+                    time.sleep(5)
+                    info = twitch.get_stream_info()
+                    if info:
+                        logging.info("Restarting recorder")
+                        recorder.start_recording(url, info.title, info.startedAt)
 
         except Exception:
             logging.exception("MAIN LOOP ERROR")

@@ -10,6 +10,8 @@ from typing import BinaryIO, TypedDict, NotRequired
 from pathlib import Path
 from app.config import Config
 
+MAX_THUMBNAIL_SIZE = 200 * 1024  # 200 KB
+
 
 class TelegramMessage(TypedDict):
     message_id: int
@@ -66,61 +68,63 @@ class TelegramSender:
                 f"shadowy=2:"
                 f"bordercolor=black"
             )
-        vf_parts.append("format=rgb24")
 
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            video_path,
-            "-ss",
-            "5",
-            "-vf",
-            ",".join(vf_parts),
-            "-frames:v",
-            "1",
-            "-q:v",
-            "2",
-            thumb_path,
-        ]
+        for quality in [5, 10, 15, 20, 25, 30]:
+            cmd: list[str] = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "5",
+                "-i",
+                video_path,
+            ]
 
-        try:
-            logging.debug(f"Running ffmpeg: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, timeout=40, check=False)
-            if result.returncode != 0:
-                stderr = result.stderr.decode("utf-8", errors="replace")
-                if "font" in stderr.lower():
-                    logging.warning(
-                        "Font-related error in ffmpeg watermark. "
-                        "Ensure fonts-dejavu-core (or similar) is installed. "
-                        f"ffmpeg stderr: {stderr.strip()}"
-                    )
-                else:
+            if vf_parts:
+                cmd.extend(["-vf", ",".join(vf_parts)])
+
+            cmd.extend(
+                [
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    f"{quality}",
+                    thumb_path,
+                ]
+            )
+
+            try:
+                logging.debug(f"Running ffmpeg: {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd, capture_output=True, timeout=40, check=False
+                )
+                if result.returncode != 0:
+                    stderr = result.stderr.decode("utf-8", errors="replace")
                     logging.warning(
                         f"ffmpeg thumbnail failed (exit code {result.returncode}): "
                         f"{stderr.strip()}"
                     )
-                return None
-            if os.path.getsize(thumb_path) > 0:
+                    continue
+                file_size = os.path.getsize(thumb_path)
+                if file_size >= MAX_THUMBNAIL_SIZE:
+                    logging.debug(
+                        f"Generated thumbnail size is too big. Max thumbnail image size for telegram: {(MAX_THUMBNAIL_SIZE / 1024):.2f}KB. Generated thubnail image size: {(file_size / 1024):.2f}KB "
+                    )
+                    continue
+                if file_size == 0:
+                    logging.info(f"Thumbnail file is empty: {thumb_path}")
+                    continue
+                logging.debug(f"Successfully generated thumbnail for {video_path}")
                 return thumb_path
-            logging.warning(f"Thumbnail file is empty: {thumb_path}")
-            return None
-        except subprocess.TimeoutExpired:
-            logging.warning(
-                f"ffmpeg thumbnail timed out after 40s for {video_path}. "
-                "The video file may be corrupted or the drawtext filter hung."
-            )
-            return None
-        except Exception:
-            logging.exception("Unexpected error generating thumbnail")
-            return None
 
-    def _upload_video(
-        self, file_path: str, caption: str
-    ) -> TelegramMessage:
+            except Exception:
+                logging.exception("Unexpected error generating thumbnail")
+                return None
+        return None
+
+    def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
         logging.info("Uploading segment as a video...")
         data: dict[str, object] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
@@ -140,7 +144,7 @@ class TelegramSender:
             response = requests.post(
                 url=f"{self.base_url}/sendVideo",
                 data=data,
-                timeout=(30, 1800),
+                timeout=1800,
                 files=files,
             )
             response.raise_for_status()
@@ -155,9 +159,7 @@ class TelegramSender:
                 except OSError:
                     pass
 
-    def _upload_document(
-        self, file_path: str, caption: str
-    ):
+    def _upload_document(self, file_path: str, caption: str):
         logging.info("Uploading segment as a document...")
         data: dict[str, object] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
@@ -167,7 +169,7 @@ class TelegramSender:
         response = requests.post(
             f"{self.base_url}/sendDocument",
             data=data,
-            timeout=(30, 1800),
+            timeout=1800,
         )
         response.raise_for_status()
         payload: TelegramResponse = response.json()
@@ -181,6 +183,8 @@ class TelegramSender:
                 if Config.TELEGRAM_UPLOAD_MODE == "video":
                     try:
                         return self._upload_video(file_path, caption)
+                    except requests.exceptions.ReadTimeout:
+                        raise
                     except Exception:
                         logging.exception(
                             "Video upload failed, fallback to document", exc_info=True
@@ -189,7 +193,11 @@ class TelegramSender:
                 else:
                     return self._upload_document(file_path, caption)
             except requests.exceptions.ReadTimeout:
-                logging.warning("Telegram upload timed out, retrying...")
+                logging.warning(
+                    f"Telegram upload timed out (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 600)
             except Exception:
                 logging.exception(
                     f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
@@ -205,6 +213,7 @@ class TelegramSender:
         media: list[dict[str, str | bool]] = []
         upload_files: dict[str, tuple[str, BinaryIO, str]] = {}
         thumb_paths: list[str] = []
+        thumb_handles: list[BinaryIO] = []
         file_type = "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
         for i, (file_path, caption) in enumerate(files):
             item: dict[str, str | bool] = {
@@ -217,18 +226,20 @@ class TelegramSender:
             if i == 0:
                 item["caption"] = caption
 
-            if file_type:
+            if file_type == 'video':
                 item["supports_streaming"] = True
 
             thumb_path = self._generate_thumbnail(file_path)
             if thumb_path:
                 attach_key = f"thumb{i}"
                 item["thumbnail"] = f"attach://{attach_key}"
+                fh = open(thumb_path, "rb")
                 upload_files[attach_key] = (
                     f"thumb{i}.jpg",
-                    open(thumb_path, "rb"),
+                    fh,
                     "image/jpeg",
                 )
+                thumb_handles.append(fh)
                 thumb_paths.append(thumb_path)
 
             media.append(item)
@@ -259,6 +270,11 @@ class TelegramSender:
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
             finally:
+                for fh in thumb_handles:
+                    try:
+                        fh.close()
+                    except Exception:
+                        pass
                 for p in thumb_paths:
                     try:
                         os.remove(p)

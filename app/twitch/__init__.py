@@ -55,11 +55,11 @@ class TwitchClient:
             return self.get_stream_info_from_api(Config.TWITCH_CLIENT_ID)
         return self.get_stream_info_from_gql()
 
-    def get_stream_info_from_api(self, id: str) -> StreamInfo | None:
+    def get_stream_info_from_api(self, client_id: str) -> StreamInfo | None:
         token = self.get_token()
-        logging.info(f"Using Twitch Client-ID: {id}")
+        logging.info(f"Using Twitch Client-ID: {client_id}")
         headers: Mapping[str, str] = {
-            "Client-ID": id,
+            "Client-ID": client_id,
             "Authorization": f"Bearer {token}",
         }
 

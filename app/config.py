@@ -12,8 +12,6 @@ class Config:
 
     TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
     TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-    TELEGRAM_API_ID = int(os.environ["TELEGRAM_API_ID"])
-    TELEGRAM_API_HASH = os.environ["TELEGRAM_API_HASH"]
 
     TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
     TELEGRAM_UPLOAD_MODE = os.getenv("TELEGRAM_UPLOAD_MODE", "video")

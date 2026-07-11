@@ -57,6 +57,10 @@ class Recorder:
             "--retry-max",
             "0",
             "--stdout",
+            "--logformat",
+            "{asctime} [{levelname}] {message}",
+            "--logdateformat",
+            "%Y-%m-%d %H:%M:%S %z",
             url,
             "best",
         ]
@@ -70,6 +74,8 @@ class Recorder:
             "pipe:0",
             "-c",
             "copy",
+            "-movflags",
+            "+faststart",
             "-f",
             "segment",
             "-segment_time",
@@ -98,22 +104,32 @@ class Recorder:
 
     def stop_recording(self) -> None:
         self.running = False
-        if self.streamlink:
+        if self.streamlink and self.streamlink.poll() is None:
             self.streamlink.terminate()
-        if self.ffmpeg:
+
+        if self.ffmpeg and self.ffmpeg.poll() is None:
             self.ffmpeg.terminate()
         try:
             if self.streamlink:
                 self.streamlink.wait(timeout=30)
                 logging.info("streamlink exited (rc=%d)", self.streamlink.returncode)
         except subprocess.TimeoutExpired:
-            logging.warning("streamlink did not exit within 30s timeout")
+            logging.warning("streamlink did not exit within 30s timeout, killing")
+            if self.streamlink:
+                self.streamlink.kill()
+                self.streamlink.wait()
         try:
             if self.ffmpeg:
                 self.ffmpeg.wait(timeout=30)
                 logging.info("ffmpeg exited (rc=%d)", self.ffmpeg.returncode)
         except subprocess.TimeoutExpired:
-            logging.warning("ffmpeg did not exit within 30s timeout")
+            logging.warning("ffmpeg did not exit within 30s timeout, killing")
+            if self.ffmpeg:
+                self.ffmpeg.kill()
+                self.ffmpeg.wait()
+        if self.current_session:
+            ended_at = datetime.now(timezone.utc).isoformat()
+            db.finish_stream(self.current_session, ended_at)
         logging.info("Recording stopped")
 
     def segment_watcher(self) -> None:
@@ -135,7 +151,6 @@ class Recorder:
                 pending.discard(filename)
                 if success:
                     uploaded.add(filename)
-                    db.mark_uploaded(filename, None)
 
         while self.running:
             try:
@@ -202,15 +217,14 @@ class Recorder:
             self.check_disk_space()
         except RuntimeError:
             logging.warning("Low disk space, flushing collected segments")
-            batch = group[:]
-            group.clear()
-            self._upload_group_batch(batch, uploaded)
+            uploaded_paths = self._upload_group_batch(group, uploaded)
+            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
             return
 
         while len(group) >= 10:
             batch = group[:10]
-            group[:] = group[10:]
-            self._upload_group_batch(batch, uploaded)
+            uploaded_paths = self._upload_group_batch(batch, uploaded)
+            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
 
     def _flush_group_ended(
         self, group: list[tuple[str, str]], uploaded: set[str]
@@ -221,14 +235,16 @@ class Recorder:
         group[-1] = (file_path, caption + "\n🏁 Stream ended")
         while group:
             batch = group[:10]
-            group[:] = group[10:]
-            self._upload_group_batch(batch, uploaded)
+            uploaded_paths = self._upload_group_batch(batch, uploaded)
+            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
+            if not uploaded_paths:
+                time.sleep(10)
 
     def _upload_group_batch(
         self, batch: list[tuple[str, str]], uploaded: set[str]
-    ) -> None:
+    ) -> set[str]:
         if not batch:
-            return
+            return set()
 
         if len(batch) > 1:
             parts: list[int] = []
@@ -250,7 +266,9 @@ class Recorder:
                     ),
                 )
 
-        uploaded.update(uploader.upload_group(batch))
+        uploaded_paths = uploader.upload_group(batch)
+        uploaded.update(uploaded_paths)
+        return uploaded_paths
 
     def _upload_remaining_group(
         self, uploaded: set[str], session: str | None = None
@@ -298,8 +316,10 @@ class Recorder:
 
         while all_items:
             chunk = all_items[:10]
-            all_items = all_items[10:]
-            self._upload_group_batch(chunk, uploaded)
+            uploaded_paths = self._upload_group_batch(chunk, uploaded)
+            all_items = [(p, c) for p, c in all_items if p not in uploaded_paths]
+            if not uploaded_paths:
+                time.sleep(10)
 
     def upload_remaining(
         self,
@@ -329,10 +349,6 @@ class Recorder:
             "upload_remaining: found %d total segments for %s", len(files), session
         )
 
-        def on_uploaded(filename: str, success: bool = False) -> None:
-            if success:
-                db.mark_uploaded(filename, None)
-
         remaining: list[Path] = []
         for file in files:
             with lock:
@@ -347,7 +363,7 @@ class Recorder:
                 file.name,
                 ended=(index == len(remaining)),
             )
-            uploader.enqueue(str(file), caption, on_uploaded)
+            uploader.enqueue(str(file), caption)
 
     def build_caption(self, filename: str, ended: bool = False) -> str:
         part = str(int(Path(filename).stem.split("_")[-1]) + 1)

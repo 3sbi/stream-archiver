@@ -34,20 +34,30 @@ class UploadWorker:
         if not files:
             return uploaded_set
 
-        result = telegram.upload_media_group(files)
+        try:
+            result = telegram.upload_media_group(files)
+            if result:
+                first_id = telegram.get_message_id(result[0])
+                if self._first_message_id is None and first_id is not None:
+                    self._first_message_id = first_id
 
-        if result:
-            first_id = telegram.get_message_id(result[0])
-            if self._first_message_id is None and first_id is not None:
-                self._first_message_id = first_id
-
-            for i, (file_path, _) in enumerate(files):
-                filename = os.path.basename(file_path)
-                msg_id = telegram.get_message_id(result[i]) if i < len(result) else None
-                db.mark_uploaded(filename, msg_id)
+                for i, (file_path, _) in enumerate(files):
+                    filename = os.path.basename(file_path)
+                    msg_id = (
+                        telegram.get_message_id(result[i]) if i < len(result) else None
+                    )
+                    db.mark_uploaded(filename, msg_id)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    uploaded_set.add(file_path)
+        except Exception:
+            logging.exception("Upload group error")
+            for file_path, _ in files:
                 if os.path.exists(file_path):
-                    os.remove(file_path)
-                uploaded_set.add(file_path)
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
 
         return uploaded_set
 
@@ -71,8 +81,14 @@ class UploadWorker:
                     logging.info(f"Already uploaded: {filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
+                    if callback:
+                        try:
+                            callback(file_path, False)
+                        except Exception:
+                            pass
                     self.queue.task_done()
                     continue
+
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
                 result = telegram.upload(file_path, caption)
