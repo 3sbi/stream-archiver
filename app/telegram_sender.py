@@ -30,6 +30,10 @@ class TelegramSender:
         logging.info(
             f"Stream parts will be sent to TG channel {Config.TELEGRAM_CHANNEL_ID}"
         )
+        if Config.TELEGRAM_SECOND_CHANNEL_ID:
+            logging.info(
+                f"Files will also be sent as documents to TG channel {Config.TELEGRAM_SECOND_CHANNEL_ID}"
+            )
         self.base_url: str = f"{Config.TELEGRAM_API_URL}/bot{Config.TELEGRAM_BOT_TOKEN}"
 
     def _generate_thumbnail(self, video_path: str) -> str | None:
@@ -159,10 +163,10 @@ class TelegramSender:
                 except OSError:
                     pass
 
-    def _upload_document(self, file_path: str, caption: str):
-        logging.info("Uploading segment as a document...")
+    def _upload_document(self, file_path: str, caption: str, chat_id: str):
+        logging.info(f"Uploading segment as a document to {chat_id}...")
         data: dict[str, object] = {
-            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "chat_id": chat_id,
             "caption": caption,
             "document": f"file://{file_path}",
         }
@@ -176,6 +180,7 @@ class TelegramSender:
         return payload["result"]
 
     def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
+        chat_id = Config.TELEGRAM_CHANNEL_ID
         delay = 10
         max_retries = 5
         for attempt in range(max_retries):
@@ -189,9 +194,9 @@ class TelegramSender:
                         logging.exception(
                             "Video upload failed, fallback to document", exc_info=True
                         )
-                        return self._upload_document(file_path, caption)
+                        return self._upload_document(file_path, caption, chat_id)
                 else:
-                    return self._upload_document(file_path, caption)
+                    return self._upload_document(file_path, caption, chat_id)
             except requests.exceptions.ReadTimeout:
                 logging.warning(
                     f"Telegram upload timed out (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
@@ -201,6 +206,30 @@ class TelegramSender:
             except Exception:
                 logging.exception(
                     f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 600)
+        return None
+
+    def upload_document_to_chat(
+        self, file_path: str, caption: str, chat_id: str
+    ) -> TelegramMessage | None:
+        delay = 10
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                return self._upload_document(file_path, caption, chat_id)
+            except requests.exceptions.ReadTimeout:
+                logging.warning(
+                    f"Second channel upload timed out "
+                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 600)
+            except Exception:
+                logging.exception(
+                    f"Second channel upload failed "
+                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
@@ -226,7 +255,7 @@ class TelegramSender:
             if i == 0:
                 item["caption"] = caption
 
-            if file_type == 'video':
+            if file_type == "video":
                 item["supports_streaming"] = True
 
             thumb_path = self._generate_thumbnail(file_path)

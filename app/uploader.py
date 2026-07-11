@@ -3,6 +3,7 @@ import queue
 import threading
 import logging
 from typing import Callable
+from .config import Config
 from .database import db
 from .telegram_sender import telegram
 
@@ -29,6 +30,16 @@ class UploadWorker:
     def first_message_id(self, value: int | None) -> None:
         self._first_message_id = value
 
+    def _send_to_second_channel(self, file_path: str, caption: str) -> None:
+        if not Config.TELEGRAM_SECOND_CHANNEL_ID:
+            return
+        try:
+            telegram.upload_document_to_chat(
+                file_path, caption, Config.TELEGRAM_SECOND_CHANNEL_ID
+            )
+        except Exception:
+            logging.exception("Failed to upload to second Telegram channel")
+
     def upload_group(self, files: list[tuple[str, str]]) -> set[str]:
         uploaded_set: set[str] = set()
         if not files:
@@ -41,12 +52,13 @@ class UploadWorker:
                 if self._first_message_id is None and first_id is not None:
                     self._first_message_id = first_id
 
-                for i, (file_path, _) in enumerate(files):
+                for i, (file_path, file_caption) in enumerate(files):
                     filename = os.path.basename(file_path)
                     msg_id = (
                         telegram.get_message_id(result[i]) if i < len(result) else None
                     )
                     db.mark_uploaded(filename, msg_id)
+                    self._send_to_second_channel(file_path, file_caption)
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     uploaded_set.add(file_path)
@@ -96,6 +108,7 @@ class UploadWorker:
                     message_id = telegram.get_message_id(result)
                     logging.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
+                    self._send_to_second_channel(file_path, caption)
                     if os.path.exists(file_path):
                         logging.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)

@@ -12,6 +12,7 @@ class Config:
 
     TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
     TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
+    TELEGRAM_SECOND_CHANNEL_ID = os.getenv("TELEGRAM_SECOND_CHANNEL_ID") # used to store raw files as documents since telegram compresses video files that were sent as media attachments
 
     TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
     TELEGRAM_UPLOAD_MODE = os.getenv("TELEGRAM_UPLOAD_MODE", "video")
