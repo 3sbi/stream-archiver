@@ -1,4 +1,5 @@
 import time
+import subprocess
 import traceback
 import logging
 from app.config import Config
@@ -42,19 +43,37 @@ logging.basicConfig(
 )
 
 
+def check_stream_via_streamlink(url: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["streamlink", "--json", url, "best"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        logging.warning("Streamlink check timed out")
+        return False
+    except Exception:
+        logging.warning("Streamlink check failed")
+        return False
+
+
 def main():
     logging.info(f"🟣 Watching Twitch channel: {Config.TWITCH_CHANNEL}")
     logging.debug(
         "Config: "
         f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
         f"segment_time={Config.SEGMENT_TIME}s, "
-        f"check_interval={Config.CHECK_INTERVAL}s, "
+        f"streamlink_check_interval={Config.CHECK_INTERVAL}s, "
         f"min_free_disk={Config.MIN_FREE_DISK_GB}GiB, "
         f"timezone={Config.TIMEZONE}, "
         f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
     )
     uploader.start()
     stream_live: bool = False
+    last_title_update: float = 0
 
     # TODO: add Kick support
     url = f"https://twitch.tv/{Config.TWITCH_CHANNEL}"
@@ -62,32 +81,48 @@ def main():
     while True:
         try:
             log_memory()
-            info = twitch.get_stream_info()
+
+            live = check_stream_via_streamlink(url)
+
+            if not live and not stream_live:
+                logging.debug("No stream found for %s", Config.TWITCH_CHANNEL)
+
             # Stream just started
-            if info is not None and not stream_live:
-                logging.info("🚀 LIVE STREAM DETECTED")
-                recorder.start_recording(url, info.title, info.startedAt)
-                stream_live = True
+            if live and not stream_live:
+                info = twitch.get_stream_info()
+                if info:
+                    logging.info("🚀 LIVE STREAM DETECTED")
+                    recorder.start_recording(url, info.title, info.startedAt)
+                    stream_live = True
+                    last_title_update = time.time()
 
             # Stream ended
-            elif info is None and stream_live:
+            elif not live and stream_live:
                 logging.info("🏁 LIVE STREAM ENDED")
                 recorder.stop_recording()
                 stream_live = False
 
             # Stream still live
-            elif info is not None and stream_live:
-                recorder.update_title(info.title)
+            elif live and stream_live:
+                # Update title periodically via Twitch API
+                if time.time() - last_title_update > Config.METAINFO_CHECK_INTERVAL:
+                    info = twitch.get_stream_info()
+                    if info:
+                        recorder.update_title(info.title)
+                        last_title_update = time.time()
+
                 # Detect unexpected recorder crash
                 if recorder.streamlink and recorder.streamlink.poll() is not None:
                     streamlink_rc = recorder.streamlink.returncode
                     logging.warning("Streamlink exited (rc=%d)", streamlink_rc)
                     recorder.stop_recording()
                     time.sleep(5)
-                    info = twitch.get_stream_info()
-                    if info:
-                        logging.info("Restarting recorder")
-                        recorder.start_recording(url, info.title, info.startedAt)
+                    if check_stream_via_streamlink(url):
+                        info = twitch.get_stream_info()
+                        if info:
+                            logging.info("Restarting recorder")
+                            recorder.start_recording(url, info.title, info.startedAt)
+                            last_title_update = time.time()
 
         except Exception:
             logging.exception("MAIN LOOP ERROR")
