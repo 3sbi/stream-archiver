@@ -238,12 +238,14 @@ class TelegramSender:
     def upload_media_group(
         self,
         files: list[tuple[str, str]],
+        chat_id: str,
+        file_type: str,
     ) -> list[TelegramMessage] | None:
         media: list[dict[str, str | bool]] = []
         upload_files: dict[str, tuple[str, BinaryIO, str]] = {}
         thumb_paths: list[str] = []
         thumb_handles: list[BinaryIO] = []
-        file_type = "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
+
         for i, (file_path, caption) in enumerate(files):
             item: dict[str, str | bool] = {
                 "type": file_type,
@@ -257,24 +259,23 @@ class TelegramSender:
 
             if file_type == "video":
                 item["supports_streaming"] = True
-
-            thumb_path = self._generate_thumbnail(file_path)
-            if thumb_path:
-                attach_key = f"thumb{i}"
-                item["thumbnail"] = f"attach://{attach_key}"
-                fh = open(thumb_path, "rb")
-                upload_files[attach_key] = (
-                    f"thumb{i}.jpg",
-                    fh,
-                    "image/jpeg",
-                )
-                thumb_handles.append(fh)
-                thumb_paths.append(thumb_path)
+                thumb_path = self._generate_thumbnail(file_path)
+                if thumb_path:
+                    attach_key = f"thumb{i}"
+                    item["thumbnail"] = f"attach://{attach_key}"
+                    fh = open(thumb_path, "rb")
+                    upload_files[attach_key] = (
+                        f"thumb{i}.jpg",
+                        fh,
+                        "image/jpeg",
+                    )
+                    thumb_handles.append(fh)
+                    thumb_paths.append(thumb_path)
 
             media.append(item)
 
         data: dict[str, str | int] = {
-            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "chat_id": chat_id,
             "media": json.dumps(media),
         }
         delay = 10

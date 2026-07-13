@@ -30,13 +30,21 @@ class UploadWorker:
     def first_message_id(self, value: int | None) -> None:
         self._first_message_id = value
 
-    def _send_to_second_channel(self, file_path: str, caption: str) -> None:
+    def _send_to_second_channel(self, files: list[tuple[str, str]]) -> None:
         if not Config.TELEGRAM_SECOND_CHANNEL_ID:
             return
         try:
-            telegram.upload_document_to_chat(
-                file_path, caption, Config.TELEGRAM_SECOND_CHANNEL_ID
-            )
+            if len(files) == 1:
+                file_path, caption = files[0]
+                telegram.upload_document_to_chat(
+                    file_path, caption, Config.TELEGRAM_SECOND_CHANNEL_ID
+                )
+            else:
+                telegram.upload_media_group(
+                    files,
+                    chat_id=Config.TELEGRAM_SECOND_CHANNEL_ID,
+                    file_type="document",
+                )
         except Exception:
             logging.exception("Failed to upload to second Telegram channel")
 
@@ -46,22 +54,32 @@ class UploadWorker:
             return uploaded_set
 
         try:
-            result = telegram.upload_media_group(files)
+            file_type = (
+                "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
+            )
+            result = telegram.upload_media_group(
+                files=files,
+                chat_id=Config.TELEGRAM_CHANNEL_ID,
+                file_type=file_type,
+            )
             if result:
                 first_id = telegram.get_message_id(result[0])
                 if self._first_message_id is None and first_id is not None:
                     self._first_message_id = first_id
 
-                for i, (file_path, file_caption) in enumerate(files):
+                for i, (file_path, _) in enumerate(files):
                     filename = os.path.basename(file_path)
                     msg_id = (
                         telegram.get_message_id(result[i]) if i < len(result) else None
                     )
                     db.mark_uploaded(filename, msg_id)
-                    self._send_to_second_channel(file_path, file_caption)
+                    uploaded_set.add(file_path)
+
+                self._send_to_second_channel(files)
+
+                for file_path, _ in files:
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                    uploaded_set.add(file_path)
         except Exception:
             logging.exception("Upload group error")
             for file_path, _ in files:
@@ -108,7 +126,7 @@ class UploadWorker:
                     message_id = telegram.get_message_id(result)
                     logging.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
-                    self._send_to_second_channel(file_path, caption)
+                    self._send_to_second_channel([(file_path, caption)])
                     if os.path.exists(file_path):
                         logging.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)
