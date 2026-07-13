@@ -193,8 +193,7 @@ class Recorder:
                 traceback.print_exc()
                 time.sleep(10)
 
-        self._flush_group_ended(group, uploaded)
-        self._upload_remaining_group(uploaded, session=session)
+        self._finalize_stream(group, uploaded, session)
 
     def _collect_new_segments_for_group(
         self, session: str, uploaded: set[str], group: list[tuple[str, str]]
@@ -229,11 +228,39 @@ class Recorder:
             uploaded_paths = self._upload_group_batch(batch, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
 
-    def _flush_group_ended(
-        self, group: list[tuple[str, str]], uploaded: set[str]
+    def _finalize_stream(
+        self, group: list[tuple[str, str]], uploaded: set[str], session: str
     ) -> None:
-        if not group:
-            return
+        if self.ffmpeg and self.ffmpeg.poll() is None:
+            logging.debug("_finalize_stream: waiting for ffmpeg to finish")
+            try:
+                self.ffmpeg.wait(timeout=30)
+                logging.info(
+                    "_finalize_stream: ffmpeg exited (rc=%d)",
+                    self.ffmpeg.returncode,
+                )
+            except subprocess.TimeoutExpired:
+                logging.warning(
+                    "_finalize_stream: ffmpeg did not exit within 30s timeout"
+                )
+        time.sleep(1)
+
+        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
+        group_paths = {f for f, _ in group}
+        for file in files:
+            file_str = str(file)
+            if file_str in uploaded or file_str in group_paths:
+                continue
+            caption = self.build_caption(file.name)
+            group.append((file_str, caption))
+            logging.debug("_finalize_stream: collected remaining segment %s", file.name)
+
+        logging.info(
+            "_finalize_stream: uploading %d remaining segments in batches of %d",
+            len(group),
+            MAX_GROUP_UPLOAD_SIZE,
+        )
+
         while group:
             batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
@@ -270,54 +297,6 @@ class Recorder:
         uploaded_paths = uploader.upload_group(batch)
         uploaded.update(uploaded_paths)
         return uploaded_paths
-
-    def _upload_remaining_group(
-        self, uploaded: set[str], session: str | None = None
-    ) -> None:
-        if session is None:
-            session = self.current_session
-
-        if self.ffmpeg and self.ffmpeg.poll() is None:
-            logging.debug("_upload_remaining_group: waiting for ffmpeg to finish")
-            try:
-                self.ffmpeg.wait(timeout=30)
-                logging.info(
-                    "_upload_remaining_group: ffmpeg exited (rc=%d)",
-                    self.ffmpeg.returncode,
-                )
-            except subprocess.TimeoutExpired:
-                logging.warning(
-                    "_upload_remaining_group: ffmpeg did not exit within 30s timeout"
-                )
-        time.sleep(1)
-
-        files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
-        logging.info(
-            "_upload_remaining_group: found %d total segments for %s",
-            len(files),
-            session,
-        )
-
-        remaining = [str(f) for f in files if str(f) not in uploaded]
-        if not remaining:
-            return
-
-        logging.info(
-            "_upload_remaining_group: uploading %d remaining segments",
-            len(remaining),
-        )
-
-        all_items: list[tuple[str, str]] = []
-        for file_path in remaining:
-            caption = self.build_caption(Path(file_path).name)
-            all_items.append((file_path, caption))
-
-        while all_items:
-            chunk = all_items[:MAX_GROUP_UPLOAD_SIZE]
-            uploaded_paths = self._upload_group_batch(chunk, uploaded)
-            all_items = [(p, c) for p, c in all_items if p not in uploaded_paths]
-            if not uploaded_paths:
-                time.sleep(10)
 
     def upload_remaining(
         self,
