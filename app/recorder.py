@@ -166,7 +166,7 @@ class Recorder:
                     with lock:
                         if str(file) in uploaded or str(file) in pending:
                             continue
-                    caption = self.build_caption(file.name, ended=False)
+                    caption = self.build_caption(file.name)
                     logging.debug(
                         "_individual_watcher: queuing %s for upload", file.name
                     )
@@ -209,7 +209,7 @@ class Recorder:
             age = now - file.stat().st_mtime
             if age < Config.SEGMENT_TIME:
                 continue
-            caption = self.build_caption(file.name, ended=False)
+            caption = self.build_caption(file.name)
             group.append((file_str, caption))
             logging.debug("_group_watcher: collected %s", file.name)
 
@@ -234,8 +234,6 @@ class Recorder:
     ) -> None:
         if not group:
             return
-        file_path, caption = group[-1]
-        group[-1] = (file_path, caption + "\n🏁 Stream ended")
         while group:
             batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
@@ -311,11 +309,8 @@ class Recorder:
 
         all_items: list[tuple[str, str]] = []
         for file_path in remaining:
-            caption = self.build_caption(Path(file_path).name, ended=False)
+            caption = self.build_caption(Path(file_path).name)
             all_items.append((file_path, caption))
-
-        last_path, last_caption = all_items[-1]
-        all_items[-1] = (last_path, last_caption + "\n🏁 Stream ended")
 
         while all_items:
             chunk = all_items[:MAX_GROUP_UPLOAD_SIZE]
@@ -361,21 +356,16 @@ class Recorder:
         logging.info(
             "upload_remaining: uploading %d remaining segments", len(remaining)
         )
-        for index, file in enumerate(remaining, start=1):
-            caption = self.build_caption(
-                file.name,
-                ended=(index == len(remaining)),
-            )
+        for file in remaining:
+            caption = self.build_caption(file.name)
             uploader.enqueue(str(file), caption)
 
-    def build_caption(self, filename: str, ended: bool = False) -> str:
+    def build_caption(self, filename: str) -> str:
         part = str(int(Path(filename).stem.split("_")[-1]) + 1)
         date = datetime.fromisoformat(self.started_at).astimezone(
             ZoneInfo(Config.TIMEZONE)
         )
         caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart №{part}"
-        if ended:
-            caption += "\n🏁 Stream ended"
         return caption[:1024]
 
 
