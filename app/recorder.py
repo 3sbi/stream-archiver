@@ -15,6 +15,9 @@ from app.uploader import uploader
 from app.config import Config
 from app.database import db
 
+# Telegram allows max 10 files per group upload
+MAX_GROUP_UPLOAD_SIZE = 10
+
 
 class Recorder:
     def __init__(self) -> None:
@@ -221,8 +224,8 @@ class Recorder:
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
             return
 
-        while len(group) >= 10:
-            batch = group[:10]
+        while len(group) >= MAX_GROUP_UPLOAD_SIZE:
+            batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
 
@@ -234,7 +237,7 @@ class Recorder:
         file_path, caption = group[-1]
         group[-1] = (file_path, caption + "\n🏁 Stream ended")
         while group:
-            batch = group[:10]
+            batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
             if not uploaded_paths:
@@ -315,7 +318,7 @@ class Recorder:
         all_items[-1] = (last_path, last_caption + "\n🏁 Stream ended")
 
         while all_items:
-            chunk = all_items[:10]
+            chunk = all_items[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(chunk, uploaded)
             all_items = [(p, c) for p, c in all_items if p not in uploaded_paths]
             if not uploaded_paths:
