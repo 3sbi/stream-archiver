@@ -259,18 +259,19 @@ class TelegramSender:
 
             if file_type == "video":
                 item["supports_streaming"] = True
-                thumb_path = self._generate_thumbnail(file_path)
-                if thumb_path:
-                    attach_key = f"thumb{i}"
-                    item["thumbnail"] = f"attach://{attach_key}"
-                    fh = open(thumb_path, "rb")
-                    upload_files[attach_key] = (
-                        f"thumb{i}.jpg",
-                        fh,
-                        "image/jpeg",
-                    )
-                    thumb_handles.append(fh)
-                    thumb_paths.append(thumb_path)
+
+            thumb_path = self._generate_thumbnail(file_path)
+            if thumb_path:
+                attach_key = f"thumb{i}"
+                item["thumbnail"] = f"attach://{attach_key}"
+                fh = open(thumb_path, "rb")
+                upload_files[attach_key] = (
+                    f"thumb{i}.jpg",
+                    fh,
+                    "image/jpeg",
+                )
+                thumb_handles.append(fh)
+                thumb_paths.append(thumb_path)
 
             media.append(item)
 
