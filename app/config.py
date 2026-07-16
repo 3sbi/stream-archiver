@@ -20,7 +20,7 @@ class Config:
 
     GROUP_SEGMENTS = os.getenv("GROUP_SEGMENTS", "false").lower() == "true"
 
-    METAINFO_CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "120"))
+    METAINFO_CHECK_INTERVAL = int(os.getenv("METAINFO_CHECK_INTERVAL", "120"))
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))
     DB_PATH = os.getenv("DB_PATH", "/data/recorder.db")
