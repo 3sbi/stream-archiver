@@ -118,9 +118,9 @@ class TelegramSender:
                     )
                     continue
                 if file_size == 0:
-                    logging.info(f"Thumbnail file is empty: {thumb_path}")
+                    logging.warning(f"Thumbnail file is empty: {thumb_path}")
                     continue
-                logging.debug(f"Successfully generated thumbnail for {video_path}")
+                logging.info(f"Successfully generated thumbnail for {video_path}")
                 return thumb_path
 
             except Exception:
