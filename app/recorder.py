@@ -87,6 +87,28 @@ class Recorder:
         cmd.append(segment_pattern)
         return cmd
 
+    def _stop_process(
+        self,
+        proc: subprocess.Popen[bytes] | None,
+        name: str,
+        timeout: int = 30,
+        terminate: bool = True,
+    ) -> None:
+        if proc is None or proc.poll() is not None:
+            return
+        if terminate:
+            proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+            logging.info("%s exited (rc=%d)", name, proc.returncode)
+        except subprocess.TimeoutExpired:
+            if terminate:
+                logging.warning("%s did not exit within %ds, killing", name, timeout)
+                proc.kill()
+                proc.wait()
+            else:
+                logging.warning("%s did not exit within %ds timeout", name, timeout)
+
     def _launch_processes(
         self, url: str, segment_pattern: str, start_number: int = 0
     ) -> None:
@@ -134,29 +156,8 @@ class Recorder:
 
     def stop_recording(self) -> None:
         self.running = False
-        if self.streamlink and self.streamlink.poll() is None:
-            self.streamlink.terminate()
-
-        if self.ffmpeg and self.ffmpeg.poll() is None:
-            self.ffmpeg.terminate()
-        try:
-            if self.streamlink:
-                self.streamlink.wait(timeout=30)
-                logging.info("streamlink exited (rc=%d)", self.streamlink.returncode)
-        except subprocess.TimeoutExpired:
-            logging.warning("streamlink did not exit within 30s timeout, killing")
-            if self.streamlink:
-                self.streamlink.kill()
-                self.streamlink.wait()
-        try:
-            if self.ffmpeg:
-                self.ffmpeg.wait(timeout=30)
-                logging.info("ffmpeg exited (rc=%d)", self.ffmpeg.returncode)
-        except subprocess.TimeoutExpired:
-            logging.warning("ffmpeg did not exit within 30s timeout, killing")
-            if self.ffmpeg:
-                self.ffmpeg.kill()
-                self.ffmpeg.wait()
+        self._stop_process(self.streamlink, "streamlink")
+        self._stop_process(self.ffmpeg, "ffmpeg")
         if self.current_session:
             ended_at = datetime.now(timezone.utc).isoformat()
             db.finish_stream(self.current_session, ended_at)
@@ -168,21 +169,8 @@ class Recorder:
         logging.info("Recording stopped")
 
     def restart_recording(self, url: str, title: str):
-        if self.streamlink and self.streamlink.poll() is None:
-            self.streamlink.terminate()
-            try:
-                self.streamlink.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.streamlink.kill()
-                self.streamlink.wait()
-
-        if self.ffmpeg and self.ffmpeg.poll() is None:
-            self.ffmpeg.terminate()
-            try:
-                self.ffmpeg.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                self.ffmpeg.kill()
-                self.ffmpeg.wait(timeout=30)
+        self._stop_process(self.streamlink, "streamlink", timeout=10)
+        self._stop_process(self.ffmpeg, "ffmpeg")
 
         segments = [
             int(f.stem.split("_")[-1])
@@ -294,18 +282,7 @@ class Recorder:
     def _finalize_stream(
         self, group: list[tuple[str, str]], uploaded: set[str], session: str
     ) -> None:
-        if self.ffmpeg and self.ffmpeg.poll() is None:
-            logging.debug("_finalize_stream: waiting for ffmpeg to finish")
-            try:
-                self.ffmpeg.wait(timeout=30)
-                logging.info(
-                    "_finalize_stream: ffmpeg exited (rc=%d)",
-                    self.ffmpeg.returncode,
-                )
-            except subprocess.TimeoutExpired:
-                logging.warning(
-                    "_finalize_stream: ffmpeg did not exit within 30s timeout"
-                )
+        self._stop_process(self.ffmpeg, "ffmpeg", terminate=False)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         group_paths = {f for f, _ in group}
@@ -370,17 +347,7 @@ class Recorder:
         if session is None:
             session = self.current_session
 
-        if self.ffmpeg and self.ffmpeg.poll() is None:
-            logging.debug("upload_remaining: waiting for ffmpeg to finish")
-            try:
-                self.ffmpeg.wait(timeout=30)
-                logging.info(
-                    "upload_remaining: ffmpeg exited (rc=%d)", self.ffmpeg.returncode
-                )
-            except subprocess.TimeoutExpired:
-                logging.warning(
-                    "upload_remaining: ffmpeg did not exit within 30s timeout"
-                )
+        self._stop_process(self.ffmpeg, "ffmpeg", terminate=False)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         logging.info(
