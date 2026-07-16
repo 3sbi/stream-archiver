@@ -130,13 +130,13 @@ class Recorder:
         )
         self.running = True
 
-    def start_recording(self, url: str, title: str, started_at: str):
+    def start_recording(self, url: str, title: str, started_at: str, channel_name: str):
         self.check_disk_space()
         uploader.reset_thread_anchor()
         self.current_title = title
         self.started_at = started_at
         self.current_session = datetime.now(timezone.utc).strftime(
-            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
+            f"{channel_name}_%Y-%m-%dT%H:%M:%S"
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(

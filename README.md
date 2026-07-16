@@ -1,6 +1,6 @@
-# Twitch to Telegram archiver
+# Twitch/Kick to Telegram archiver
 
-This script detects when a live stream begins, records it in real time, and archives the recorded segments in a Telegram channel.
+Detects when a live stream begins on Twitch or Kick, records it in real time, and archives the recorded segments in a Telegram channel.
 
 Optimized for and tested on low-spec machine (i.e. VPS with 1 GiB RAM and 1 vCPU), requires no more than 220Mb.
 
@@ -12,7 +12,8 @@ Copy `.env.example` to `.env` and fill in the values.
 
 | Variable                  | Required | Default                    | Description                                                                                                            |
 | ------------------------- | -------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `TWITCH_CHANNEL`          | Yes      | —                          | Twitch channel name to monitor and record                                                                              |
+| `CHANNEL`                 | Yes      | —                          | Channel name to monitor and record                                                                                     |
+| `PLATFORM`                | Yes      | —                          | Streaming platform: `twitch` or `kick`                                                                                 |
 | `TWITCH_CLIENT_ID`        | No       | —                          | Twitch app client ID (optional — GraphQL API is used by default)                                                       |
 | `TWITCH_CLIENT_SECRET`    | No       | —                          | Twitch app client secret (optional — GraphQL API is used by default)                                                   |
 | `TELEGRAM_BOT_TOKEN`      | Yes      | —                          | Bot token from [@BotFather](https://t.me/BotFather)                                                                    |
@@ -37,6 +38,8 @@ Copy `.env.example` to `.env` and fill in the values.
 
 ### Docker (recommended)
 
+Each platform runs as a separate service with its own environment file and data directory.
+
 ```bash
 docker compose up -d
 ```
@@ -51,5 +54,5 @@ docker compose up -d
 
 ```bash
 pip install -r requirements.txt
-python -m app.main
+CHANNEL=xqc PLATFORM=twitch python -m app.main
 ```

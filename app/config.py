@@ -6,13 +6,16 @@ load_dotenv()
 
 class Config:
     # We use os.environ instead of os.getenv to raise error if any of these are not present
-    TWITCH_CHANNEL = os.environ["TWITCH_CHANNEL"]
+    CHANNEL = os.environ["CHANNEL"]
+    PLATFORM = os.environ["PLATFORM"]
     TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
     TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 
     TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
     TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-    TELEGRAM_SECOND_CHANNEL_ID = os.getenv("TELEGRAM_SECOND_CHANNEL_ID") # used to store raw files as documents since telegram compresses video files that were sent as media attachments
+    TELEGRAM_SECOND_CHANNEL_ID = os.getenv(
+        "TELEGRAM_SECOND_CHANNEL_ID"
+    )  # used to store raw files as documents since telegram compresses video files that were sent as media attachments
 
     TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
     TELEGRAM_UPLOAD_MODE = os.getenv("TELEGRAM_UPLOAD_MODE", "video")

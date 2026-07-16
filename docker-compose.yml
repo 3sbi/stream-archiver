@@ -11,10 +11,22 @@ services:
     ports:
       - "8081:8081"
 
-  script:
+  twitch-archiver:
     build: .
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - PLATFORM=twitch
     volumes:
-      - ./data:/data
+      - ./data/twitch:/data
+
+  kick-archiver:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PLATFORM=kick
+    volumes:
+      - ./data/kick:/data

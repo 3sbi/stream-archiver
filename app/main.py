@@ -4,6 +4,7 @@ import traceback
 import logging
 from app.config import Config
 from app.twitch import twitch
+from app.kick import kick
 from app.uploader import uploader
 from app.recorder import recorder
 import os
@@ -60,10 +61,42 @@ def check_stream_via_streamlink(url: str) -> bool:
         return False
 
 
+PLATFORMS = {
+    "twitch": {
+        "url": "https://twitch.tv",
+        "emoji": "🟣",
+    },
+    "kick": {
+        "url": "https://kick.com",
+        "emoji": "🟢",
+    },
+}
+
+
+def get_platform() -> tuple[str, str, str]:
+    """Returns (platform_name, channel_name, stream_url)."""
+    platform = Config.PLATFORM.lower()
+    if platform not in PLATFORMS:
+        raise ValueError(
+            f"PLATFORM must be one of: {', '.join(PLATFORMS)}, got '{Config.PLATFORM}'"
+        )
+    url_origin = PLATFORMS[platform]["url"]
+    return platform, Config.CHANNEL, f"{url_origin}/{Config.CHANNEL}"
+
+
+def get_stream_info(platform: str):
+    if platform == "kick":
+        return kick.get_stream_info()
+    return twitch.get_stream_info()
+
+
 def main():
-    logging.info(f"🟣 Watching Twitch channel: {Config.TWITCH_CHANNEL}")
+    platform, channel_name, url = get_platform()
+    emoji = PLATFORMS[platform]["emoji"]
+    logging.info(f"{emoji} Watching {platform.capitalize()} channel: {channel_name}")
     logging.debug(
         "Config: "
+        f"platform={platform}, "
         f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
         f"segment_time={Config.SEGMENT_TIME}s, "
         f"streamlink_check_interval={Config.CHECK_INTERVAL}s, "
@@ -77,9 +110,6 @@ def main():
     grace_period_start: float = 0
     last_title_update: float = 0
 
-    # TODO: add Kick support
-    url = f"https://twitch.tv/{Config.TWITCH_CHANNEL}"
-
     while True:
         try:
             log_memory()
@@ -87,14 +117,16 @@ def main():
             live = check_stream_via_streamlink(url)
 
             if not live and not stream_was_live:
-                logging.debug("No stream found for %s", Config.TWITCH_CHANNEL)
+                logging.debug("No stream found for %s", Config.CHANNEL)
 
             # Stream just started
             if live and not stream_was_live:
                 info = twitch.get_stream_info()
                 if info:
                     logging.info("🚀 LIVE STREAM DETECTED")
-                    recorder.start_recording(url, info.title, info.startedAt)
+                    recorder.start_recording(
+                        url, info.title, info.startedAt, channel_name
+                    )
                     stream_was_live = True
                     last_title_update = time.time()
                     in_grace_period = False
@@ -155,7 +187,9 @@ def main():
                         info = twitch.get_stream_info()
                         if info:
                             logging.info("Restarting recorder")
-                            recorder.start_recording(url, info.title, info.startedAt)
+                            recorder.start_recording(
+                                url, info.title, info.startedAt, channel_name
+                            )
                             last_title_update = time.time()
 
         except Exception:
