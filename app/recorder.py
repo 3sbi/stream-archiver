@@ -17,6 +17,8 @@ from app.database import db
 
 # Telegram allows max 10 files per group upload
 MAX_GROUP_UPLOAD_SIZE = 10
+# Re-enqueue if upload hasn't completed within this many multiples of SEGMENT_TIME
+STALE_UPLOAD_MULTIPLIER = 3
 
 
 class Recorder:
@@ -197,14 +199,16 @@ class Recorder:
             self._individual_watcher(session, uploaded)
 
     def _individual_watcher(self, session: str, uploaded: set[str]) -> None:
-        pending: set[str] = set()
+        pending: dict[str, float] = {}
         lock = threading.Lock()
 
         def on_uploaded(filename: str, success: bool = False) -> None:
             with lock:
-                pending.discard(filename)
+                pending.pop(filename, None)
                 if success:
                     uploaded.add(filename)
+
+        stale_threshold = Config.SEGMENT_TIME * STALE_UPLOAD_MULTIPLIER
 
         while self.running:
             try:
@@ -215,15 +219,23 @@ class Recorder:
                     if age < Config.SEGMENT_TIME:
                         continue
                     with lock:
-                        if str(file) in uploaded or str(file) in pending:
+                        if str(file) in uploaded:
                             continue
+                        if str(file) in pending:
+                            if now - pending[str(file)] < stale_threshold:
+                                continue
+                            logging.warning(
+                                "_individual_watcher: retrying stale upload %s",
+                                file.name,
+                            )
+                            pending.pop(str(file), None)
                     caption = self.build_caption(file.name)
                     logging.debug(
                         "_individual_watcher: queuing %s for upload", file.name
                     )
                     uploader.enqueue(str(file), caption, on_uploaded)
                     with lock:
-                        pending.add(str(file))
+                        pending[str(file)] = now
                 time.sleep(10)
             except Exception:
                 logging.error("_individual_watcher error")
@@ -340,7 +352,7 @@ class Recorder:
     def upload_remaining(
         self,
         uploaded: set[str],
-        pending: set[str],
+        pending: dict[str, float],
         lock: threading.Lock,
         session: str | None = None,
     ) -> None:
