@@ -29,6 +29,7 @@ class Recorder:
         self.started_at: str = ""
         self.streamlink: Optional[subprocess.Popen[bytes]] = None
         self.ffmpeg: Optional[subprocess.Popen[bytes]] = None
+        self._watcher_thread: Optional[threading.Thread] = None
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -110,7 +111,7 @@ class Recorder:
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
         self._launch_processes(url, segment_pattern)
-        threading.Thread(target=self.segment_watcher, daemon=True).start()
+        self._start_watcher_thread()
         if self.streamlink and self.ffmpeg:
             logging.info(
                 f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
@@ -121,6 +122,15 @@ class Recorder:
             logging.info(f'Stream title changed: "{self.current_title}" → "{title}"')
             self.current_title = title
             db.update_title(self.current_session, title)
+
+    def _start_watcher_thread(self) -> None:
+        if self._watcher_thread is not None and self._watcher_thread.is_alive():
+            logging.warning("Watcher thread already running, skipping duplicate start")
+            return
+        self._watcher_thread = threading.Thread(
+            target=self.segment_watcher, daemon=True
+        )
+        self._watcher_thread.start()
 
     def stop_recording(self) -> None:
         self.running = False
@@ -150,6 +160,11 @@ class Recorder:
         if self.current_session:
             ended_at = datetime.now(timezone.utc).isoformat()
             db.finish_stream(self.current_session, ended_at)
+        if self._watcher_thread and self._watcher_thread.is_alive():
+            self._watcher_thread.join(timeout=60)
+            if self._watcher_thread.is_alive():
+                logging.warning("Watcher thread did not exit within 60s")
+        self._watcher_thread = None
         logging.info("Recording stopped")
 
     def restart_recording(self, url: str, title: str):
