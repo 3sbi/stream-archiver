@@ -62,7 +62,7 @@ class Recorder:
         ]
 
     def _build_ffmpeg_cmd(
-        self, segment_pattern: str, start_number: int = 0
+        self, segment_pattern: str, start_number: int = 0, title: str | None = None
     ) -> list[str]:
         cmd: list[str] = [
             "ffmpeg",
@@ -75,6 +75,10 @@ class Recorder:
             "copy",
             "-movflags",
             "+faststart",
+        ]
+        if title:
+            cmd += ["-metadata", f"title={title}"]
+        cmd += [
             "-f",
             "segment",
             "-segment_time",
@@ -112,10 +116,14 @@ class Recorder:
                 logging.warning("%s did not exit within %ds timeout", name, timeout)
 
     def _launch_processes(
-        self, url: str, segment_pattern: str, start_number: int = 0
+        self,
+        url: str,
+        segment_pattern: str,
+        start_number: int = 0,
+        title: str | None = None,
     ) -> None:
         streamlink_cmd = self._build_streamlink_cmd(url)
-        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number)
+        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number, title)
         self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
         self.ffmpeg = subprocess.Popen(
             ffmpeg_cmd, stdin=self.streamlink.stdout, stderr=subprocess.PIPE
@@ -134,7 +142,7 @@ class Recorder:
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
-        self._launch_processes(url, segment_pattern)
+        self._launch_processes(url, segment_pattern, title=title)
         self._start_watcher_thread()
         if self.streamlink and self.ffmpeg:
             logging.info(
@@ -183,7 +191,7 @@ class Recorder:
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
-        self._launch_processes(url, segment_pattern, start_number)
+        self._launch_processes(url, segment_pattern, start_number, self.current_title)
         logging.info(
             f"Recording restarted: {title} | segment_start_number={start_number}"
         )
