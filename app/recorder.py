@@ -23,6 +23,7 @@ class Recorder:
     def __init__(self) -> None:
         Path(Config.SEGMENTS_DIR).mkdir(parents=True, exist_ok=True)
         self.running: bool = False
+        self.in_grace_period: bool = False
         self.current_session: Optional[str] = None
         self.current_title: Optional[str] = None
         self.started_at: str = ""
@@ -41,19 +42,8 @@ class Recorder:
         if free < Config.MIN_FREE_DISK_GB:
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
-    def start_recording(self, url: str, title: str, started_at: str):
-        self.check_disk_space()
-        uploader.reset_thread_anchor()
-        self.current_title = title
-        self.started_at = started_at
-        self.current_session = datetime.now(timezone.utc).strftime(
-            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
-        )
-        db.create_stream(self.current_session, title, started_at)
-        segment_pattern: str = os.path.join(
-            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
-        )
-        streamlink_cmd: list[str] = [
+    def _build_streamlink_cmd(self, url: str) -> list[str]:
+        return [
             "streamlink",
             "--retry-streams",
             "30",
@@ -68,7 +58,10 @@ class Recorder:
             "best",
         ]
 
-        ffmpeg_cmd = [
+    def _build_ffmpeg_cmd(
+        self, segment_pattern: str, start_number: int = 0
+    ) -> list[str]:
+        cmd: list[str] = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel",
@@ -87,17 +80,41 @@ class Recorder:
             "1",
             "-segment_format",
             "mp4",
-            segment_pattern,
         ]
+        if start_number > 0:
+            cmd += ["-segment_start_number", str(start_number)]
+        cmd.append(segment_pattern)
+        return cmd
+
+    def _launch_processes(
+        self, url: str, segment_pattern: str, start_number: int = 0
+    ) -> None:
+        streamlink_cmd = self._build_streamlink_cmd(url)
+        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number)
         self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
         self.ffmpeg = subprocess.Popen(
             ffmpeg_cmd, stdin=self.streamlink.stdout, stderr=subprocess.PIPE
         )
         self.running = True
-        threading.Thread(target=self.segment_watcher, daemon=True).start()
-        logging.info(
-            f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
+
+    def start_recording(self, url: str, title: str, started_at: str):
+        self.check_disk_space()
+        uploader.reset_thread_anchor()
+        self.current_title = title
+        self.started_at = started_at
+        self.current_session = datetime.now(timezone.utc).strftime(
+            f"{Config.TWITCH_CHANNEL}_%Y-%m-%dT%H:%M:%S"
         )
+        db.create_stream(self.current_session, title, started_at)
+        segment_pattern: str = os.path.join(
+            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
+        )
+        self._launch_processes(url, segment_pattern)
+        threading.Thread(target=self.segment_watcher, daemon=True).start()
+        if self.streamlink and self.ffmpeg:
+            logging.info(
+                f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
+            )
 
     def update_title(self, title: str) -> None:
         if self.current_title != title and self.current_session:
@@ -134,6 +151,37 @@ class Recorder:
             ended_at = datetime.now(timezone.utc).isoformat()
             db.finish_stream(self.current_session, ended_at)
         logging.info("Recording stopped")
+
+    def restart_recording(self, url: str, title: str):
+        if self.streamlink and self.streamlink.poll() is None:
+            self.streamlink.terminate()
+            try:
+                self.streamlink.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.streamlink.kill()
+                self.streamlink.wait()
+
+        if self.ffmpeg and self.ffmpeg.poll() is None:
+            self.ffmpeg.terminate()
+            try:
+                self.ffmpeg.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.ffmpeg.kill()
+                self.ffmpeg.wait(timeout=30)
+
+        segments = [
+            int(f.stem.split("_")[-1])
+            for f in Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
+        ]
+        start_number = max(segments) + 1 if segments else 0
+
+        segment_pattern: str = os.path.join(
+            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
+        )
+        self._launch_processes(url, segment_pattern, start_number)
+        logging.info(
+            f"Recording restarted: {title} | segment_start_number={start_number}"
+        )
 
     def segment_watcher(self) -> None:
         session = self.current_session
@@ -243,7 +291,6 @@ class Recorder:
                 logging.warning(
                     "_finalize_stream: ffmpeg did not exit within 30s timeout"
                 )
-        time.sleep(1)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         group_paths = {f for f, _ in group}
@@ -319,7 +366,6 @@ class Recorder:
                 logging.warning(
                     "upload_remaining: ffmpeg did not exit within 30s timeout"
                 )
-        time.sleep(1)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         logging.info(

@@ -22,6 +22,7 @@ class Config:
 
     METAINFO_CHECK_INTERVAL = int(os.getenv("METAINFO_CHECK_INTERVAL", "120"))
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
+    GRACE_PERIOD = int(os.getenv("GRACE_PERIOD", "240"))
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))
     DB_PATH = os.getenv("DB_PATH", "/data/recorder.db")
     SEGMENTS_DIR = os.getenv("SEGMENTS_DIR", "/data/segments")

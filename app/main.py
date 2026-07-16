@@ -72,7 +72,9 @@ def main():
         f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
     )
     uploader.start()
-    stream_live: bool = False
+    stream_was_live: bool = False
+    in_grace_period: bool = False
+    grace_period_start: float = 0
     last_title_update: float = 0
 
     # TODO: add Kick support
@@ -84,26 +86,58 @@ def main():
 
             live = check_stream_via_streamlink(url)
 
-            if not live and not stream_live:
+            if not live and not stream_was_live:
                 logging.debug("No stream found for %s", Config.TWITCH_CHANNEL)
 
             # Stream just started
-            if live and not stream_live:
+            if live and not stream_was_live:
                 info = twitch.get_stream_info()
                 if info:
                     logging.info("🚀 LIVE STREAM DETECTED")
                     recorder.start_recording(url, info.title, info.startedAt)
-                    stream_live = True
+                    stream_was_live = True
                     last_title_update = time.time()
+                    in_grace_period = False
 
-            # Stream ended
-            elif not live and stream_live:
-                logging.info("🏁 LIVE STREAM ENDED")
-                recorder.stop_recording()
-                stream_live = False
+            # Stream ended or interrupted
+            elif not live and stream_was_live:
+                if not in_grace_period:
+                    in_grace_period = True
+                    grace_period_start = time.time()
+                    recorder.in_grace_period = True
+                    logging.info(
+                        "Stream interrupted, waiting %ds before finalizing...",
+                        Config.GRACE_PERIOD,
+                    )
 
-            # Stream still live
-            elif live and stream_live:
+                if recorder.streamlink and recorder.streamlink.poll() is not None:
+                    logging.warning(
+                        "Streamlink exited during grace period (rc=%d)",
+                        recorder.streamlink.returncode,
+                    )
+
+                if time.time() - grace_period_start > Config.GRACE_PERIOD:
+                    logging.info("🏁 Grace period expired, stream truly ended")
+                    recorder.stop_recording()
+                    stream_was_live = False
+                    in_grace_period = False
+                    recorder.in_grace_period = False
+
+            # Stream still live or was resumed during grace period
+            elif live and stream_was_live:
+                if in_grace_period:
+                    logging.info(
+                        "Stream resumed after interruption, continuing recording"
+                    )
+                    in_grace_period = False
+                    recorder.in_grace_period = False
+
+                    if recorder.streamlink and recorder.streamlink.poll() is not None:
+                        info = twitch.get_stream_info()
+                        if info:
+                            logging.info("Restarting recorder after stream resume")
+                            recorder.restart_recording(url, info.title)
+                            last_title_update = time.time()
                 # Update title periodically via Twitch API
                 if time.time() - last_title_update > Config.METAINFO_CHECK_INTERVAL:
                     info = twitch.get_stream_info()
