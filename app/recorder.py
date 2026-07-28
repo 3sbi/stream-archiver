@@ -347,7 +347,7 @@ class Recorder:
                     first_path,
                     re.sub(
                         r"Part №(\d+)",
-                        f"Part №{min_part}-{max_part}",
+                        f"Parts №{min_part}-{max_part}",
                         first_caption,
                         count=1,
                     ),
