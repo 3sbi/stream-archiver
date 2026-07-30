@@ -19,7 +19,7 @@ services:
     environment:
       - PLATFORM=twitch
     volumes:
-      - ./data/twitch:/data
+      - ./data:/data
 
   kick-archiver:
     build: .
@@ -29,4 +29,4 @@ services:
     environment:
       - PLATFORM=kick
     volumes:
-      - ./data/kick:/data
+      - ./data:/data

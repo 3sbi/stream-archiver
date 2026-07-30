@@ -300,17 +300,16 @@ class TelegramSender:
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
-            finally:
-                for fh in thumb_handles:
-                    try:
-                        fh.close()
-                    except Exception:
-                        pass
-                for p in thumb_paths:
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+        for fh in thumb_handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
+        for p in thumb_paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
         return None
 
     @staticmethod

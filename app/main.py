@@ -165,14 +165,14 @@ def main():
                     recorder.in_grace_period = False
 
                     if recorder.streamlink and recorder.streamlink.poll() is not None:
-                        info = twitch.get_stream_info()
+                        info = get_stream_info(platform)
                         if info:
                             logging.info("Restarting recorder after stream resume")
                             recorder.restart_recording(url, info.title)
                             last_title_update = time.time()
                 # Update title periodically via Twitch API
                 if time.time() - last_title_update > Config.METAINFO_CHECK_INTERVAL:
-                    info = twitch.get_stream_info()
+                    info = get_stream_info(platform)
                     if info:
                         recorder.update_title(info.title)
                         last_title_update = time.time()
@@ -184,7 +184,7 @@ def main():
                     recorder.stop_recording()
                     time.sleep(5)
                     if check_stream_via_streamlink(url):
-                        info = twitch.get_stream_info()
+                        info = get_stream_info(platform)
                         if info:
                             logging.info("Restarting recorder")
                             recorder.start_recording(
