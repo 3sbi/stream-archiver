@@ -121,7 +121,7 @@ def main():
 
             # Stream just started
             if live and not stream_was_live:
-                info = twitch.get_stream_info()
+                info = get_stream_info(platform)
                 if info:
                     logging.info("🚀 LIVE STREAM DETECTED")
                     recorder.start_recording(

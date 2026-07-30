@@ -1,13 +1,10 @@
 from typing import TypedDict
 
 
-class KickLivestream(TypedDict, total=False):
+class KickLivestream(TypedDict):
     id: int
-    stream_title: str
-    started_at: str
-    is_live: bool
-    viewer_count: int
-    thumbnail: str
+    session_title: str
+    created_at: str
 
 
 class KickUser(TypedDict):
