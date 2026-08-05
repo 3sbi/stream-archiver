@@ -39,10 +39,11 @@ class Recorder:
 
     def check_disk_space(self) -> None:
         free = self.free_space_gb()
-        logging.debug(
+        logging.info(
             f"Disk space check: {free:.2f}GB free (min={Config.MIN_FREE_DISK_GB}GB)"
         )
         if free < Config.MIN_FREE_DISK_GB:
+            logging.warning(f"Disk space low ({free:.2f}GB)")
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
     def _build_streamlink_cmd(self, url: str) -> list[str]:
