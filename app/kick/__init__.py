@@ -37,7 +37,6 @@ class KickClient:
 
             title = livestream["session_title"]
             created_at = livestream["created_at"]
-            print(title, created_at)
             if not title or not created_at:
                 return None
 
