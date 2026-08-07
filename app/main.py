@@ -180,17 +180,15 @@ def main():
                 # Detect unexpected recorder crash
                 if recorder.streamlink and recorder.streamlink.poll() is not None:
                     streamlink_rc = recorder.streamlink.returncode
-                    logging.warning("Streamlink exited (rc=%d)", streamlink_rc)
-                    recorder.stop_recording()
-                    time.sleep(5)
-                    if check_stream_via_streamlink(url):
-                        info = get_stream_info(platform)
-                        if info:
-                            logging.info("Restarting recorder")
-                            recorder.start_recording(
-                                url, info.title, info.startedAt, channel_name
-                            )
-                            last_title_update = time.time()
+                    if not in_grace_period:
+                        in_grace_period = True
+                        grace_period_start = time.time()
+                        recorder.in_grace_period = True
+                        logging.warning(
+                            "Recorder crashed (rc=%d), waiting %ds before finalizing...",
+                            streamlink_rc,
+                            Config.GRACE_PERIOD,
+                        )
 
         except Exception:
             logging.exception("MAIN LOOP ERROR")
