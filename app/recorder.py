@@ -174,7 +174,7 @@ class Recorder:
         except BrokenPipeError:
             logger.warning("Relay: ffmpeg stopped reading, stopping streamlink")
             self._stop_process(result.proc, "streamlink", terminate=True)
-        except Exception:
+        except OSError:
             logger.error("Relay error")
             traceback.print_exc()
         finally:
