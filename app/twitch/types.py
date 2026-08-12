@@ -1,4 +1,4 @@
-from typing import TypeAlias, TypedDict
+from typing import TypedDict
 
 
 class AuthResponse(TypedDict):
@@ -63,4 +63,4 @@ class ComscoreStreamingQueryResponse(TypedDict):
     data: Data
 
 
-ComscoreStreamingQueryResponses: TypeAlias = list[ComscoreStreamingQueryResponse]
+type ComscoreStreamingQueryResponses = list[ComscoreStreamingQueryResponse]

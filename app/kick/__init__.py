@@ -1,9 +1,13 @@
-import requests
 import logging
 from dataclasses import dataclass
+from typing import ClassVar
+
+import requests
 
 from app.config import Config
 from app.kick.types import KickChannelResponse
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -13,8 +17,8 @@ class StreamInfo:
 
 
 class KickClient:
-    API_BASE = "https://kick.com/api/v1"
-    HEADERS = {
+    API_BASE: ClassVar = "https://kick.com/api/v1"
+    HEADERS: ClassVar[dict[str, str]] = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.5",
@@ -42,18 +46,18 @@ class KickClient:
 
             return StreamInfo(title=title, startedAt=created_at)
         except requests.exceptions.ConnectionError:
-            logging.warning("Kick API connection failed (network/DNS error)")
+            logger.warning("Kick API connection failed (network/DNS error)")
             raise
         except requests.exceptions.RequestException as e:
             response = getattr(e, "response", None)
             if response is not None:
                 status = response.status_code
                 body = response.text
-                logging.warning(
+                logger.warning(
                     "Kick API request failed: status=%s body=%s", status, body
                 )
             else:
-                logging.warning("Kick API request failed: %s", e)
+                logger.warning("Kick API request failed: %s", e)
             return None
 
 

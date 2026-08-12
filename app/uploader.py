@@ -1,11 +1,14 @@
+import logging
 import os
 import queue
 import threading
-import logging
-from typing import Callable
+from collections.abc import Callable
+
 from .config import Config
 from .database import db
 from .telegram_sender import telegram
+
+logger = logging.getLogger(__name__)
 
 
 class UploadWorker:
@@ -46,7 +49,7 @@ class UploadWorker:
                     file_type="document",
                 )
         except Exception:
-            logging.exception("Failed to upload to second Telegram channel")
+            logger.exception("Failed to upload to second Telegram channel")
 
     def upload_group(self, files: list[tuple[str, str]]) -> set[str]:
         uploaded_set: set[str] = set()
@@ -81,7 +84,7 @@ class UploadWorker:
                     if os.path.exists(file_path):
                         os.remove(file_path)
         except Exception:
-            logging.exception("Upload group error")
+            logger.exception("Upload group error")
             for file_path, _ in files:
                 if os.path.exists(file_path):
                     try:
@@ -98,7 +101,7 @@ class UploadWorker:
         callback: Callable[[str, bool], None] | None = None,
     ) -> None:
         filename = os.path.basename(file_path)
-        logging.info(f"Added new file to telegram upload queue: {filename}")
+        logger.info(f"Added new file to telegram upload queue: {filename}")
         self.queue.put((file_path, caption, callback))
 
     def _worker(self) -> None:
@@ -108,7 +111,7 @@ class UploadWorker:
             try:
                 filename = os.path.basename(file_path)
                 if db.is_uploaded(filename):
-                    logging.info(f"Already uploaded: {filename}")
+                    logger.info(f"Already uploaded: {filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     if callback:
@@ -120,19 +123,19 @@ class UploadWorker:
                     continue
 
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
-                logging.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
+                logger.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
                 result = telegram.upload(file_path, caption)
                 if result:
                     message_id = telegram.get_message_id(result)
-                    logging.info(f"Uploaded file: {filename}")
+                    logger.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
                     self._send_to_second_channel([(file_path, caption)])
                     if os.path.exists(file_path):
-                        logging.info(f"Removing uploaded file: {filename}")
+                        logger.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)
                     success = True
             except Exception:
-                logging.exception("Upload worker error", exc_info=True)
+                logger.exception("Upload worker error")
             if callback:
                 try:
                     callback(file_path, success)

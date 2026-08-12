@@ -1,19 +1,20 @@
+import logging
 import os
 import re
-import time
 import shutil
 import subprocess
-import traceback
-import logging
-from pathlib import Path
-from datetime import datetime, timezone
 import threading
-from typing import Optional
+import time
+import traceback
+from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app.uploader import uploader
 from app.config import Config
 from app.database import db
+from app.uploader import uploader
+
+logger = logging.getLogger(__name__)
 
 # Telegram allows max 10 files per group upload
 MAX_GROUP_UPLOAD_SIZE = 10
@@ -26,12 +27,12 @@ class Recorder:
         Path(Config.SEGMENTS_DIR).mkdir(parents=True, exist_ok=True)
         self.running: bool = False
         self.in_grace_period: bool = False
-        self.current_session: Optional[str] = None
-        self.current_title: Optional[str] = None
+        self.current_session: str | None = None
+        self.current_title: str | None = None
         self.started_at: str = ""
-        self.streamlink: Optional[subprocess.Popen[bytes]] = None
-        self.ffmpeg: Optional[subprocess.Popen[bytes]] = None
-        self._watcher_thread: Optional[threading.Thread] = None
+        self.streamlink: subprocess.Popen[bytes] | None = None
+        self.ffmpeg: subprocess.Popen[bytes] | None = None
+        self._watcher_thread: threading.Thread | None = None
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -39,11 +40,11 @@ class Recorder:
 
     def check_disk_space(self) -> None:
         free = self.free_space_gb()
-        logging.info(
+        logger.info(
             f"Disk space check: {free:.2f}GB free (min={Config.MIN_FREE_DISK_GB}GB)"
         )
         if free < Config.MIN_FREE_DISK_GB:
-            logging.warning(f"Disk space low ({free:.2f}GB)")
+            logger.warning(f"Disk space low ({free:.2f}GB)")
             raise RuntimeError(f"Disk space low ({free:.2f}GB)")
 
     def _build_streamlink_cmd(self, url: str) -> list[str]:
@@ -107,14 +108,14 @@ class Recorder:
             proc.terminate()
         try:
             proc.wait(timeout=timeout)
-            logging.info("%s exited (rc=%d)", name, proc.returncode)
+            logger.info("%s exited (rc=%d)", name, proc.returncode)
         except subprocess.TimeoutExpired:
             if terminate:
-                logging.warning("%s did not exit within %ds, killing", name, timeout)
+                logger.warning("%s did not exit within %ds, killing", name, timeout)
                 proc.kill()
                 proc.wait()
             else:
-                logging.warning("%s did not exit within %ds timeout", name, timeout)
+                logger.warning("%s did not exit within %ds timeout", name, timeout)
 
     def _launch_processes(
         self,
@@ -136,7 +137,7 @@ class Recorder:
         uploader.reset_thread_anchor()
         self.current_title = title
         self.started_at = started_at
-        self.current_session = datetime.now(timezone.utc).strftime(
+        self.current_session = datetime.now(UTC).strftime(
             f"{channel_name}_%Y-%m-%dT%H-%M-%S"
         )
         db.create_stream(self.current_session, title, started_at)
@@ -146,19 +147,19 @@ class Recorder:
         self._launch_processes(url, segment_pattern, title=title)
         self._start_watcher_thread()
         if self.streamlink and self.ffmpeg:
-            logging.info(
+            logger.info(
                 f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
             )
 
     def update_title(self, title: str) -> None:
         if self.current_title != title and self.current_session:
-            logging.info(f'Stream title changed: "{self.current_title}" → "{title}"')
+            logger.info(f'Stream title changed: "{self.current_title}" → "{title}"')
             self.current_title = title
             db.update_title(self.current_session, title)
 
     def _start_watcher_thread(self) -> None:
         if self._watcher_thread is not None and self._watcher_thread.is_alive():
-            logging.warning("Watcher thread already running, skipping duplicate start")
+            logger.warning("Watcher thread already running, skipping duplicate start")
             return
         self._watcher_thread = threading.Thread(
             target=self.segment_watcher, daemon=True
@@ -170,14 +171,14 @@ class Recorder:
         self._stop_process(self.streamlink, "streamlink")
         self._stop_process(self.ffmpeg, "ffmpeg")
         if self.current_session:
-            ended_at = datetime.now(timezone.utc).isoformat()
+            ended_at = datetime.now(UTC).isoformat()
             db.finish_stream(self.current_session, ended_at)
         if self._watcher_thread and self._watcher_thread.is_alive():
             self._watcher_thread.join(timeout=60)
             if self._watcher_thread.is_alive():
-                logging.warning("Watcher thread did not exit within 60s")
+                logger.warning("Watcher thread did not exit within 60s")
         self._watcher_thread = None
-        logging.info("Recording stopped")
+        logger.info("Recording stopped")
 
     def restart_recording(self, url: str, title: str):
         self._stop_process(self.streamlink, "streamlink", timeout=10)
@@ -193,7 +194,7 @@ class Recorder:
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
         self._launch_processes(url, segment_pattern, start_number, self.current_title)
-        logging.info(
+        logger.info(
             f"Recording restarted: {title} | segment_start_number={start_number}"
         )
 
@@ -233,13 +234,13 @@ class Recorder:
                         if str(file) in pending:
                             if now - pending[str(file)] < stale_threshold:
                                 continue
-                            logging.warning(
+                            logger.warning(
                                 "_individual_watcher: retrying stale upload %s",
                                 file.name,
                             )
                             pending.pop(str(file), None)
                     caption = self.build_caption(file.name)
-                    logging.debug(
+                    logger.debug(
                         "_individual_watcher: queuing %s for upload", file.name
                     )
                     uploader.enqueue(str(file), caption, on_uploaded)
@@ -247,7 +248,7 @@ class Recorder:
                         pending[str(file)] = now
                 time.sleep(10)
             except Exception:
-                logging.error("_individual_watcher error")
+                logger.error("_individual_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
         self.upload_remaining(uploaded, pending, lock, session=session)
@@ -261,7 +262,7 @@ class Recorder:
                 self._flush_group_if_needed(group, uploaded)
                 time.sleep(10)
             except Exception:
-                logging.error("_group_watcher error")
+                logger.error("_group_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
 
@@ -282,7 +283,7 @@ class Recorder:
                 continue
             caption = self.build_caption(file.name)
             group.append((file_str, caption))
-            logging.debug("_group_watcher: collected %s", file.name)
+            logger.debug("_group_watcher: collected %s", file.name)
 
     def _flush_group_if_needed(
         self, group: list[tuple[str, str]], uploaded: set[str]
@@ -290,7 +291,7 @@ class Recorder:
         try:
             self.check_disk_space()
         except RuntimeError:
-            logging.warning("Low disk space, flushing collected segments")
+            logger.warning("Low disk space, flushing collected segments")
             uploaded_paths = self._upload_group_batch(group, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
             return
@@ -313,9 +314,9 @@ class Recorder:
                 continue
             caption = self.build_caption(file.name)
             group.append((file_str, caption))
-            logging.debug("_finalize_stream: collected remaining segment %s", file.name)
+            logger.debug("_finalize_stream: collected remaining segment %s", file.name)
 
-        logging.info(
+        logger.info(
             "_finalize_stream: uploading %d remaining segments in batches of %d",
             len(group),
             MAX_GROUP_UPLOAD_SIZE,
@@ -371,7 +372,7 @@ class Recorder:
         self._stop_process(self.ffmpeg, "ffmpeg", terminate=False)
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
-        logging.info(
+        logger.info(
             "upload_remaining: found %d total segments for %s", len(files), session
         )
 
@@ -381,7 +382,7 @@ class Recorder:
                 if str(file) not in uploaded and str(file) not in pending:
                     remaining.append(file)
 
-        logging.info(
+        logger.info(
             "upload_remaining: uploading %d remaining segments", len(remaining)
         )
         for file in remaining:

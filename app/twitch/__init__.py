@@ -1,15 +1,18 @@
-import time
-import requests
-from typing import Mapping
 import logging
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 
+import requests
+
+from app.config import Config
 from app.twitch.types import (
-    ComscoreStreamingQueryResponses,
     AuthResponse,
+    ComscoreStreamingQueryResponses,
     StreamsApiResponse,
 )
-from app.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,14 +39,14 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.RequestException:
-            logging.warning("Twitch token refresh failed")
+            logger.warning("Twitch token refresh failed")
             return
 
         data: AuthResponse = response.json()
         self.token = data["access_token"]
         # refresh 5 minutes before expiry
         self.refresh_at = time.time() + data["expires_in"] - 300
-        logging.info("Twitch token refreshed")
+        logger.info("Twitch token refreshed")
 
     def get_token(self):
         if self.token is None or time.time() >= self.refresh_at:
@@ -57,7 +60,7 @@ class TwitchClient:
 
     def get_stream_info_from_api(self, client_id: str) -> StreamInfo | None:
         token = self.get_token()
-        logging.info(f"Using Twitch Client-ID: {client_id}")
+        logger.info(f"Using Twitch Client-ID: {client_id}")
         headers: Mapping[str, str] = {
             "Client-ID": client_id,
             "Authorization": f"Bearer {token}",
@@ -72,10 +75,10 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            logging.warning("Twitch API connection failed (network/DNS error)")
+            logger.warning("Twitch API connection failed (network/DNS error)")
             raise
         except requests.exceptions.RequestException:
-            logging.warning("Twitch API request failed")
+            logger.warning("Twitch API request failed")
             return None
 
         payload: StreamsApiResponse = response.json()
@@ -119,13 +122,13 @@ class TwitchClient:
             )
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            logging.warning("Twitch GraphQL connection failed (network/DNS error)")
+            logger.warning("Twitch GraphQL connection failed (network/DNS error)")
             raise
         except requests.exceptions.RequestException:
-            logging.warning("Twitch GraphQL request failed")
+            logger.warning("Twitch GraphQL request failed")
             return None
         except Exception:
-            logging.warning("Something went wrong while fetching Twitch GraphQL")
+            logger.warning("Something went wrong while fetching Twitch GraphQL")
             return None
 
         payload: ComscoreStreamingQueryResponses = response.json()
