@@ -1,21 +1,25 @@
-import time
-import subprocess
-import traceback
 import logging
-from app.config import Config
-from app.twitch import twitch
-from app.kick import kick
-from app.uploader import uploader
-from app.recorder import recorder
 import os
+import subprocess
+import time
+import traceback
+
 import psutil
+
+from app.config import Config
+from app.kick import kick
+from app.recorder import recorder
+from app.twitch import twitch
+from app.uploader import uploader
+
+logger = logging.getLogger(__name__)
 
 
 def log_memory():
     proc = psutil.Process(os.getpid())
 
     total = proc.memory_info().rss
-    logging.debug(
+    logger.debug(
         "Python: %.1f MB",
         total / 1024 / 1024,
     )
@@ -24,7 +28,7 @@ def log_memory():
         try:
             rss = child.memory_info().rss
             total += rss
-            logging.debug(
+            logger.debug(
                 "  %s (pid=%d): %.1f MB",
                 child.name(),
                 child.pid,
@@ -33,7 +37,7 @@ def log_memory():
         except psutil.NoSuchProcess:
             pass
 
-    logging.debug("Total (Python + children): %.1f MB", total / 1024 / 1024)
+    logger.debug("Total (Python + children): %.1f MB", total / 1024 / 1024)
 
 
 logging.basicConfig(
@@ -54,10 +58,10 @@ def check_stream_via_streamlink(url: str) -> bool:
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
-        logging.warning("Streamlink check timed out")
+        logger.warning("Streamlink check timed out")
         return False
     except Exception:
-        logging.warning("Streamlink check failed")
+        logger.warning("Streamlink check failed")
         return False
 
 
@@ -93,8 +97,8 @@ def get_stream_info(platform: str):
 def main():
     platform, channel_name, url = get_platform()
     emoji = PLATFORMS[platform]["emoji"]
-    logging.info(f"{emoji} Watching {platform.capitalize()} channel: {channel_name}")
-    logging.debug(
+    logger.info(f"{emoji} Watching {platform.capitalize()} channel: {channel_name}")
+    logger.debug(
         "Config: "
         f"platform={platform}, "
         f"upload_mode={Config.TELEGRAM_UPLOAD_MODE}, "
@@ -119,13 +123,13 @@ def main():
             live = check_stream_via_streamlink(url)
 
             if not live and not stream_was_live:
-                logging.debug("No stream found for %s", Config.CHANNEL)
+                logger.debug("No stream found for %s", Config.CHANNEL)
 
             # Stream just started
             if live and not stream_was_live:
                 info = get_stream_info(platform)
                 if info:
-                    logging.info("🚀 LIVE STREAM DETECTED")
+                    logger.info("🚀 LIVE STREAM DETECTED")
                     recorder.start_recording(
                         url, info.title, info.startedAt, channel_name
                     )
@@ -139,19 +143,19 @@ def main():
                     in_grace_period = True
                     grace_period_start = time.time()
                     recorder.in_grace_period = True
-                    logging.info(
+                    logger.info(
                         "Stream interrupted, waiting %ds before finalizing...",
                         Config.GRACE_PERIOD,
                     )
 
                 if recorder.streamlink and recorder.streamlink.poll() is not None:
-                    logging.warning(
+                    logger.warning(
                         "Streamlink exited during grace period (rc=%d)",
                         recorder.streamlink.returncode,
                     )
 
                 if time.time() - grace_period_start > Config.GRACE_PERIOD:
-                    logging.info("🏁 Grace period expired, stream truly ended")
+                    logger.info("🏁 Grace period expired, stream truly ended")
                     recorder.stop_recording()
                     stream_was_live = False
                     in_grace_period = False
@@ -160,7 +164,7 @@ def main():
             # Stream still live or was resumed during grace period
             elif live and stream_was_live:
                 if in_grace_period:
-                    logging.info(
+                    logger.info(
                         "Stream resumed after interruption, continuing recording"
                     )
                     in_grace_period = False
@@ -169,7 +173,7 @@ def main():
                     if recorder.streamlink and recorder.streamlink.poll() is not None:
                         info = get_stream_info(platform)
                         if info:
-                            logging.info("Restarting recorder after stream resume")
+                            logger.info("Restarting recorder after stream resume")
                             recorder.restart_recording(url, info.title)
                             last_title_update = time.time()
                 # Update title periodically via Twitch API
@@ -186,14 +190,14 @@ def main():
                         in_grace_period = True
                         grace_period_start = time.time()
                         recorder.in_grace_period = True
-                        logging.warning(
+                        logger.warning(
                             "Recorder crashed (rc=%d), waiting %ds before finalizing...",
                             streamlink_rc,
                             Config.GRACE_PERIOD,
                         )
 
         except Exception:
-            logging.exception("MAIN LOOP ERROR")
+            logger.exception("MAIN LOOP ERROR")
             traceback.print_exc()
 
         time.sleep(Config.CHECK_INTERVAL)

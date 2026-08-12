@@ -1,14 +1,18 @@
-import os
-import time
 import json
+import logging
+import os
 import shutil
 import subprocess
 import tempfile
-import logging
-import requests
-from typing import BinaryIO, TypedDict, NotRequired
+import time
 from pathlib import Path
+from typing import NotRequired, TypedDict
+
+import requests
+
 from app.config import Config
+
+logger = logging.getLogger(__name__)
 
 MAX_THUMBNAIL_SIZE = 200 * 1024  # 200 KB
 
@@ -27,11 +31,11 @@ class TelegramResponse(TypedDict):
 
 class TelegramSender:
     def __init__(self) -> None:
-        logging.info(
+        logger.info(
             f"Stream parts will be sent to TG channel {Config.TELEGRAM_CHANNEL_ID}"
         )
         if Config.TELEGRAM_SECOND_CHANNEL_ID:
-            logging.info(
+            logger.info(
                 f"Files will also be sent as documents to TG channel {Config.TELEGRAM_SECOND_CHANNEL_ID}"
             )
         self.base_url: str = f"{Config.TELEGRAM_API_URL}/bot{Config.TELEGRAM_BOT_TOKEN}"
@@ -40,19 +44,19 @@ class TelegramSender:
         watermark_text: str = Config.TELEGRAM_WATERMARK_TEXT
 
         if not shutil.which("ffmpeg"):
-            logging.error("ffmpeg not found, cannot generate thumbnail")
+            logger.error("ffmpeg not found, cannot generate thumbnail")
             return None
 
         if not os.path.isfile(video_path):
-            logging.error(f"Video file not found for thumbnail: {video_path}")
+            logger.error(f"Video file not found for thumbnail: {video_path}")
             return None
 
         if watermark_text:
-            logging.info(
+            logger.info(
                 f"Generating thumbnail with watermark '{watermark_text}' for video {video_path}"
             )
         else:
-            logging.info(f"Generating thumbnail for video {video_path}")
+            logger.info(f"Generating thumbnail for video {video_path}")
 
         thumb_dir = Path(tempfile.gettempdir()) / "video_thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -100,49 +104,48 @@ class TelegramSender:
             )
 
             try:
-                logging.debug(f"Running ffmpeg: {' '.join(cmd)}")
+                logger.debug(f"Running ffmpeg: {' '.join(cmd)}")
                 result = subprocess.run(
                     cmd, capture_output=True, timeout=40, check=False
                 )
                 if result.returncode != 0:
                     stderr = result.stderr.decode("utf-8", errors="replace")
-                    logging.warning(
+                    logger.warning(
                         f"ffmpeg thumbnail failed (exit code {result.returncode}): "
                         f"{stderr.strip()}"
                     )
                     continue
                 file_size = os.path.getsize(thumb_path)
                 if file_size >= MAX_THUMBNAIL_SIZE:
-                    logging.debug(
+                    logger.debug(
                         f"Generated thumbnail size is too big. Max thumbnail image size for telegram: {(MAX_THUMBNAIL_SIZE / 1024):.2f}KB. Generated thubnail image size: {(file_size / 1024):.2f}KB "
                     )
                     continue
                 if file_size == 0:
-                    logging.warning(f"Thumbnail file is empty: {thumb_path}")
+                    logger.warning(f"Thumbnail file is empty: {thumb_path}")
                     continue
-                logging.info(f"Successfully generated thumbnail for {video_path}")
+                logger.info(f"Successfully generated thumbnail for {video_path}")
                 return thumb_path
 
             except Exception:
-                logging.exception("Unexpected error generating thumbnail")
+                logger.exception("Unexpected error generating thumbnail")
                 return None
         return None
 
     def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
-        logging.info("Uploading segment as a video...")
+        logger.info("Uploading segment as a video...")
         data: dict[str, object] = {
             "chat_id": Config.TELEGRAM_CHANNEL_ID,
             "caption": caption,
             "video": f"file://{file_path}",
             "supports_streaming": True,
         }
-        files: dict[str, tuple[str, BinaryIO, str]] = {}
+        files: dict[str, tuple[str, bytes, str]] = {}
         thumb_path = self._generate_thumbnail(file_path)
-        thumb_fh: BinaryIO | None = None
         if thumb_path:
             data["thumbnail"] = "attach://thumbnail"
-            thumb_fh = open(thumb_path, "rb")
-            files["thumbnail"] = ("thumb.jpg", thumb_fh, "image/jpeg")
+            with open(thumb_path, "rb") as thumb_fh:
+                files["thumbnail"] = ("thumb.jpg", thumb_fh.read(), "image/jpeg")
 
         try:
             response = requests.post(
@@ -155,8 +158,6 @@ class TelegramSender:
             payload: TelegramResponse = response.json()
             return payload["result"]
         finally:
-            if thumb_fh:
-                thumb_fh.close()
             if thumb_path:
                 try:
                     os.remove(thumb_path)
@@ -164,7 +165,7 @@ class TelegramSender:
                     pass
 
     def _upload_document(self, file_path: str, caption: str, chat_id: str):
-        logging.info(f"Uploading segment as a document to {chat_id}...")
+        logger.info(f"Uploading segment as a document to {chat_id}...")
         data: dict[str, object] = {
             "chat_id": chat_id,
             "caption": caption,
@@ -191,20 +192,18 @@ class TelegramSender:
                     except requests.exceptions.ReadTimeout:
                         raise
                     except Exception:
-                        logging.exception(
-                            "Video upload failed, fallback to document", exc_info=True
-                        )
+                        logger.exception("Video upload failed, fallback to document")
                         return self._upload_document(file_path, caption, chat_id)
                 else:
                     return self._upload_document(file_path, caption, chat_id)
             except requests.exceptions.ReadTimeout:
-                logging.warning(
+                logger.warning(
                     f"Telegram upload timed out (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
             except Exception:
-                logging.exception(
+                logger.exception(
                     f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
@@ -220,14 +219,14 @@ class TelegramSender:
             try:
                 return self._upload_document(file_path, caption, chat_id)
             except requests.exceptions.ReadTimeout:
-                logging.warning(
+                logger.warning(
                     f"Second channel upload timed out "
                     f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
             except Exception:
-                logging.exception(
+                logger.exception(
                     f"Second channel upload failed "
                     f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
@@ -242,9 +241,8 @@ class TelegramSender:
         file_type: str,
     ) -> list[TelegramMessage] | None:
         media: list[dict[str, str | bool]] = []
-        upload_files: dict[str, tuple[str, BinaryIO, str]] = {}
+        upload_files: dict[str, tuple[str, bytes, str]] = {}
         thumb_paths: list[str] = []
-        thumb_handles: list[BinaryIO] = []
 
         for i, (file_path, caption) in enumerate(files):
             item: dict[str, str | bool] = {
@@ -264,13 +262,12 @@ class TelegramSender:
             if thumb_path:
                 attach_key = f"thumb{i}"
                 item["thumbnail"] = f"attach://{attach_key}"
-                fh = open(thumb_path, "rb")
-                upload_files[attach_key] = (
-                    f"thumb{i}.jpg",
-                    fh,
-                    "image/jpeg",
-                )
-                thumb_handles.append(fh)
+                with open(thumb_path, "rb") as fh:
+                    upload_files[attach_key] = (
+                        f"thumb{i}.jpg",
+                        fh.read(),
+                        "image/jpeg",
+                    )
                 thumb_paths.append(thumb_path)
 
             media.append(item)
@@ -292,19 +289,14 @@ class TelegramSender:
                 response.raise_for_status()
                 return response.json()["result"]
             except requests.exceptions.ReadTimeout:
-                logging.warning("Telegram media group upload timed out, retrying...")
+                logger.warning("Telegram media group upload timed out, retrying...")
             except Exception:
-                logging.exception(
+                logger.exception(
                     f"Media group upload failed "
                     f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
-        for fh in thumb_handles:
-            try:
-                fh.close()
-            except Exception:
-                pass
         for p in thumb_paths:
             try:
                 os.remove(p)

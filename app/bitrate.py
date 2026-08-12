@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from app.config import Config
 
+logger = logging.getLogger(__name__)
+
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -56,28 +58,28 @@ def probe_stream(url: str, seconds: int, buffer_path: str) -> ProbeResult:
     elapsed = time.time() - read_start if read_start is not None else 0.0
     bitrate = int(total * 8 / elapsed) if elapsed > 0 else None
     if bitrate:
-        logging.info(
+        logger.info(
             "Bitrate probe: %s in %.1fs -> %.0f kbps",
             _format_bytes(total),
             elapsed,
             bitrate / 1000,
         )
     else:
-        logging.warning("Bitrate probe produced no data")
+        logger.warning("Bitrate probe produced no data")
     return ProbeResult(bitrate, buffer_path, proc, total)
 
 
 def compute_segment_time(bitrate_bps: int | None) -> int:
     """Duration that keeps each segment under the size limit but as large as possible."""
     if bitrate_bps is None or bitrate_bps <= 0:
-        logging.warning(
+        logger.warning(
             "Bitrate unavailable, falling back to SEGMENT_TIME=%ds",
             Config.SEGMENT_TIME,
         )
         return Config.SEGMENT_TIME
     max_bytes = Config.MAX_SEGMENT_SIZE_BYTES * Config.SEGMENT_SIZE_MARGIN
     segment_time = max(Config.MIN_SEGMENT_TIME, int(max_bytes * 8 / bitrate_bps))
-    logging.info(
+    logger.info(
         "Segment time for %.0f kbps: %ds (~%.2f GiB/segment)",
         bitrate_bps / 1000,
         segment_time,

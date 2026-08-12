@@ -12,6 +12,7 @@ services:
       - "8081:8081"
 
   twitch-archiver:
+    image: stream-archiver
     build: .
     restart: unless-stopped
     env_file:
@@ -22,6 +23,7 @@ services:
       - ./data:/data
 
   kick-archiver:
+    image: stream-archiver
     build: .
     restart: unless-stopped
     env_file:
