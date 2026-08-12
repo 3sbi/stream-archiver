@@ -11,9 +11,10 @@ import threading
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from app.uploader import uploader
+from app.bitrate import ProbeResult, compute_segment_time, probe_stream
 from app.config import Config
 from app.database import db
+from app.uploader import uploader
 
 # Telegram allows max 10 files per group upload
 MAX_GROUP_UPLOAD_SIZE = 10
@@ -29,9 +30,11 @@ class Recorder:
         self.current_session: Optional[str] = None
         self.current_title: Optional[str] = None
         self.started_at: str = ""
+        self.segment_time: int = Config.SEGMENT_TIME
         self.streamlink: Optional[subprocess.Popen[bytes]] = None
         self.ffmpeg: Optional[subprocess.Popen[bytes]] = None
         self._watcher_thread: Optional[threading.Thread] = None
+        self._relay_thread: Optional[threading.Thread] = None
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -83,7 +86,7 @@ class Recorder:
             "-f",
             "segment",
             "-segment_time",
-            f"{Config.SEGMENT_TIME}",
+            f"{self.segment_time}",
             "-reset_timestamps",
             "1",
             "-segment_format",
@@ -131,6 +134,58 @@ class Recorder:
         )
         self.running = True
 
+    def _launch_processes_with_buffer(
+        self,
+        result: ProbeResult,
+        segment_pattern: str,
+        start_number: int = 0,
+        title: str | None = None,
+    ) -> None:
+        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number, title)
+        self.streamlink = result.proc
+        self.ffmpeg = subprocess.Popen(
+            ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        assert self.ffmpeg.stdin is not None
+        self._relay_thread = threading.Thread(
+            target=self._relay, args=(result, self.ffmpeg.stdin), daemon=True
+        )
+        self._relay_thread.start()
+        self.running = True
+
+    def _relay(self, result: ProbeResult, ffmpeg_stdin) -> None:
+        """Replay the buffered probe data into ffmpeg, then forward live stream bytes."""
+        try:
+            if result.buffer_path:
+                with open(result.buffer_path, "rb") as buf:
+                    while True:
+                        data = buf.read(1024 * 1024)
+                        if not data:
+                            break
+                        ffmpeg_stdin.write(data)
+            assert result.proc.stdout is not None
+            while True:
+                data = result.proc.stdout.read(1024 * 1024)
+                if not data:
+                    break
+                ffmpeg_stdin.write(data)
+        except BrokenPipeError:
+            logging.warning("Relay: ffmpeg stopped reading, stopping streamlink")
+            self._stop_process(result.proc, "streamlink", terminate=True)
+        except Exception:
+            logging.error("Relay error")
+            traceback.print_exc()
+        finally:
+            try:
+                ffmpeg_stdin.close()
+            except OSError:
+                pass
+            if result.buffer_path:
+                try:
+                    os.remove(result.buffer_path)
+                except OSError:
+                    pass
+
     def start_recording(self, url: str, title: str, started_at: str, channel_name: str):
         self.check_disk_space()
         uploader.reset_thread_anchor()
@@ -143,11 +198,25 @@ class Recorder:
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
-        self._launch_processes(url, segment_pattern, title=title)
+        probe_buffer: str = os.path.join(
+            Config.SEGMENTS_DIR, f"probe_{self.current_session}.mpg"
+        )
+        result = probe_stream(url, Config.BITRATE_PROBE_SECONDS, probe_buffer)
+        self.segment_time = compute_segment_time(result.bitrate_bps)
+        if result.bitrate_bps is None or result.total_bytes == 0:
+            logging.warning("Probe failed, recording without buffered splice")
+            self._stop_process(result.proc, "probe streamlink")
+            try:
+                os.remove(probe_buffer)
+            except OSError:
+                pass
+            self._launch_processes(url, segment_pattern, title=title)
+        else:
+            self._launch_processes_with_buffer(result, segment_pattern, title=title)
         self._start_watcher_thread()
         if self.streamlink and self.ffmpeg:
             logging.info(
-                f"Recording started: {title} | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
+                f"Recording started: {title} | segment_time={self.segment_time}s | free={self.free_space_gb():.2f}GB | pid_streamlink={self.streamlink.pid} pid_ffmpeg={self.ffmpeg.pid}"
             )
 
     def update_title(self, title: str) -> None:
@@ -169,6 +238,11 @@ class Recorder:
         self.running = False
         self._stop_process(self.streamlink, "streamlink")
         self._stop_process(self.ffmpeg, "ffmpeg")
+        if self._relay_thread and self._relay_thread.is_alive():
+            self._relay_thread.join(timeout=60)
+            if self._relay_thread.is_alive():
+                logging.warning("Relay thread did not exit within 60s")
+        self._relay_thread = None
         if self.current_session:
             ended_at = datetime.now(timezone.utc).isoformat()
             db.finish_stream(self.current_session, ended_at)
@@ -182,6 +256,11 @@ class Recorder:
     def restart_recording(self, url: str, title: str):
         self._stop_process(self.streamlink, "streamlink", timeout=10)
         self._stop_process(self.ffmpeg, "ffmpeg")
+        if self._relay_thread and self._relay_thread.is_alive():
+            self._relay_thread.join(timeout=30)
+            if self._relay_thread.is_alive():
+                logging.warning("Relay thread did not exit within 30s")
+        self._relay_thread = None
 
         segments = [
             int(f.stem.split("_")[-1])
@@ -217,7 +296,7 @@ class Recorder:
                 if success:
                     uploaded.add(filename)
 
-        stale_threshold = Config.SEGMENT_TIME * STALE_UPLOAD_MULTIPLIER
+        stale_threshold = self.segment_time * STALE_UPLOAD_MULTIPLIER
 
         while self.running:
             try:
@@ -225,7 +304,7 @@ class Recorder:
                 now = time.time()
                 for file in files:
                     age = now - file.stat().st_mtime
-                    if age < Config.SEGMENT_TIME:
+                    if age < self.segment_time:
                         continue
                     with lock:
                         if str(file) in uploaded:
@@ -278,7 +357,7 @@ class Recorder:
             if file_str in uploaded or file_str in group_paths:
                 continue
             age = now - file.stat().st_mtime
-            if age < Config.SEGMENT_TIME:
+            if age < self.segment_time:
                 continue
             caption = self.build_caption(file.name)
             group.append((file_str, caption))
