@@ -203,7 +203,9 @@ class Recorder:
         probe_buffer: str = os.path.join(
             Config.SEGMENTS_DIR, f"probe_{self.current_session}.mpg"
         )
-        result = probe_stream(url, Config.BITRATE_PROBE_SECONDS, probe_buffer)
+        result = probe_stream(
+            url=url, seconds=Config.BITRATE_PROBE_SECONDS, buffer_path=probe_buffer
+        )
         self.segment_time = compute_segment_time(result.bitrate_bps)
         if result.bitrate_bps is None or result.total_bytes == 0:
             logger.warning("Probe failed, recording without buffered splice")
