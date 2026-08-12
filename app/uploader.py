@@ -115,10 +115,7 @@ class UploadWorker:
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     if callback:
-                        try:
-                            callback(file_path, False)
-                        except Exception:
-                            pass
+                        callback(file_path, False)
                     self.queue.task_done()
                     continue
 
@@ -139,8 +136,8 @@ class UploadWorker:
             if callback:
                 try:
                     callback(file_path, success)
-                except Exception:
-                    pass
+                except (KeyError, RuntimeError, TypeError, ValueError):
+                    logger.exception("Upload callback failed")
             self.queue.task_done()
 
 
