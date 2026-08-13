@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 class UploadWorker:
     def __init__(self) -> None:
-        self.queue: queue.Queue[tuple[str, str, Callable[[str, bool], None] | None]] = (
-            queue.Queue()
-        )
+        self.queue: queue.Queue[
+            tuple[str, str, Callable[[str, bool], None] | None, bool]
+        ] = queue.Queue()
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self._first_message_id: int | None = None
 
@@ -102,11 +102,21 @@ class UploadWorker:
     ) -> None:
         filename = os.path.basename(file_path)
         logger.info(f"Added new file to telegram upload queue: {filename}")
-        self.queue.put((file_path, caption, callback))
+        self.queue.put((file_path, caption, callback, False))
+
+    def enqueue_document(
+        self,
+        file_path: str,
+        caption: str,
+        callback: Callable[[str, bool], None] | None = None,
+    ) -> None:
+        filename = os.path.basename(file_path)
+        logger.info(f"Added new document to telegram upload queue: {filename}")
+        self.queue.put((file_path, caption, callback, True))
 
     def _worker(self) -> None:
         while True:
-            file_path, caption, callback = self.queue.get()
+            file_path, caption, callback, force_document = self.queue.get()
             success = False
             try:
                 filename = os.path.basename(file_path)
@@ -121,7 +131,12 @@ class UploadWorker:
 
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logger.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
-                result = telegram.upload(file_path, caption)
+                if force_document:
+                    result = telegram.upload_document_to_chat(
+                        file_path, caption, Config.TELEGRAM_CHANNEL_ID
+                    )
+                else:
+                    result = telegram.upload(file_path, caption)
                 if result:
                     message_id = telegram.get_message_id(result)
                     logger.info(f"Uploaded file: {filename}")

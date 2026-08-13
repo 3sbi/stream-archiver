@@ -3,10 +3,14 @@ import os
 import subprocess
 import time
 import traceback
+from pathlib import Path
 
 import psutil
 
+from app.chatlog import ChatRecorder
+from app.chatlog.base import build_chat_caption
 from app.config import Config
+from app.database import db
 from app.kick import kick
 from app.recorder import recorder
 from app.twitch import twitch
@@ -95,6 +99,15 @@ def get_stream_info(platform: str):
     return twitch.get_stream_info()
 
 
+def enqueue_orphaned_chat_logs() -> None:
+    for chat_file in sorted(Path(Config.SEGMENTS_DIR).glob("*_chat.txt")):
+        if db.is_uploaded(chat_file.name):
+            continue
+        caption = build_chat_caption(Config.CHANNEL)
+        logger.info("Re-enqueuing orphaned chat log: %s", chat_file.name)
+        uploader.enqueue_document(str(chat_file), caption)
+
+
 def main():
     platform, channel_name, url = get_platform()
     emoji = PLATFORMS[platform]["emoji"]
@@ -107,9 +120,12 @@ def main():
         f"streamlink_check_interval={Config.CHECK_INTERVAL}s, "
         f"min_free_disk={Config.MIN_FREE_DISK_GB}GiB, "
         f"timezone={Config.TIMEZONE}, "
-        f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
+        f"watermark={Config.TELEGRAM_WATERMARK_TEXT}, "
+        f"chat_logging={Config.CHAT_LOGGING}"
     )
     uploader.start()
+    enqueue_orphaned_chat_logs()
+    chatlogger = ChatRecorder(platform, channel_name)
     stream_was_live: bool = False
     in_grace_period: bool = False
     grace_period_start: float = 0
@@ -132,6 +148,7 @@ def main():
                     recorder.start_recording(
                         url, info.title, info.startedAt, channel_name
                     )
+                    chatlogger.start(recorder.current_session, info.title)
                     stream_was_live = True
                     last_title_update = time.time()
                     in_grace_period = False
@@ -156,6 +173,7 @@ def main():
                 if time.time() - grace_period_start > Config.GRACE_PERIOD:
                     logger.info("🏁 Grace period expired, stream truly ended")
                     recorder.stop_recording()
+                    chatlogger.stop()
                     stream_was_live = False
                     in_grace_period = False
                     recorder.in_grace_period = False

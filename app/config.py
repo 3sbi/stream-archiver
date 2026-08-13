@@ -24,6 +24,11 @@ class Config:
 
     GROUP_SEGMENTS = os.getenv("GROUP_SEGMENTS", "false").lower() == "true"
 
+    CHAT_LOGGING = os.getenv("CHAT_LOGGING", "true").lower() == "true"
+    TWITCH_CHAT_OAUTH_TOKEN = os.getenv("TWITCH_CHAT_OAUTH_TOKEN", "")
+    TWITCH_CHAT_USERNAME = os.getenv("TWITCH_CHAT_USERNAME", "")
+    KICK_CHAT_POLL_INTERVAL = int(os.getenv("KICK_CHAT_POLL_INTERVAL", "3"))
+
     METAINFO_CHECK_INTERVAL = int(os.getenv("METAINFO_CHECK_INTERVAL", "120"))
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
     GRACE_PERIOD = int(os.getenv("GRACE_PERIOD", "240"))
