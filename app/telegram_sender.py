@@ -106,7 +106,7 @@ class TelegramSender:
             try:
                 logger.debug(f"Running ffmpeg: {' '.join(cmd)}")
                 result = subprocess.run(
-                    cmd, capture_output=True, timeout=40, check=True
+                    cmd, capture_output=True, timeout=40, check=False
                 )
                 if result.returncode != 0:
                     stderr = result.stderr.decode("utf-8", errors="replace")

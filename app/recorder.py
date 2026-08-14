@@ -336,24 +336,11 @@ class Recorder:
             return set()
 
         if len(batch) > 1:
-            parts: list[int] = []
-            for _, caption in batch:
-                m = re.search(r"Part №(\d+)", caption)
-                if m:
-                    parts.append(int(m.group(1)))
-            if parts:
-                first_path, first_caption = batch[0]
-                min_part = min(parts)
-                max_part = max(parts)
-                batch[0] = (
-                    first_path,
-                    re.sub(
-                        r"Part №(\d+)",
-                        f"Parts №{min_part}-{max_part}",
-                        first_caption,
-                        count=1,
-                    ),
-                )
+            first_path, first_caption = batch[0]
+            batch[0] = (
+                first_path,
+                re.sub(r"\n\nPart №\d+", "", first_caption, count=1),
+            )
 
         uploaded_paths = uploader.upload_group(batch)
         uploaded.update(uploaded_paths)
