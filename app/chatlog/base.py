@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from app.config import Config
@@ -13,7 +13,7 @@ class ChatMessage:
 
 
 def now_local() -> str:
-    return datetime.now(ZoneInfo(Config.TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).isoformat()
 
 
 def format_chat_line(message: ChatMessage) -> str:
@@ -21,6 +21,6 @@ def format_chat_line(message: ChatMessage) -> str:
 
 
 def build_chat_caption(title: str) -> str:
-    date = datetime.now(ZoneInfo(Config.TIMEZONE)).strftime("%d.%m.%Y")
+    date = datetime.now(UTC).isoformat()
     caption = f"{title}\n{date}\n\nChat log"
     return caption[:1024]

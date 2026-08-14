@@ -59,7 +59,7 @@ def check_stream_via_streamlink(url: str) -> bool:
             capture_output=True,
             text=True,
             timeout=30,
-            check=True,
+            check=False,
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
