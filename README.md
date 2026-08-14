@@ -45,6 +45,24 @@ While a stream is live, chat is captured to `{session}_chat.txt` and uploaded to
 - **Twitch** uses IRC over WebSocket (`wss://irc-ws.chat.twitch.tv:443`). By default it connects anonymously; set `TWITCH_CHAT_OAUTH_TOKEN` (with `chat:read` scope) and `TWITCH_CHAT_USERNAME` for an authenticated connection.
 - **Kick** has no IRC or public chat API, so chat is polled every `KICK_CHAT_POLL_INTERVAL` seconds from Kick's undocumented `/api/v2` endpoint. Heavy chats may drop messages between polls.
 
+## Chat subtitles
+
+`scripts/chat_to_ass.py` converts a chat log into an **ASS** subtitle that renders a Twitch-style chat overlay in the top-right corner of the video: a panel (default up to 15% of the width and 50% of the height) that holds as many recent messages as fit. New messages appear at the bottom of the panel and push older ones up; the oldest message that no longer fits is hidden. ASS is required because plain SRT cannot do positioning and boxes; VLC loads it the same way.
+
+```bash
+# Basic usage — writes <chat>.ass next to the chat log
+python scripts/chat_to_ass.py data/twitch/segments/rostislav_999_2026-08-14T04-09-02_chat.txt
+
+# With the matching video: picks up resolution from it, aligns timestamps to
+# that segment's start, and names the output <segment>.ass so VLC auto-loads it
+python scripts/chat_to_ass.py data/twitch/segments/rostislav_999_2026-08-14T04-09-02_chat.txt \
+    --segment data/twitch/segments/rostislav_999_2026-08-14T04-09-02_0.mp4
+```
+
+In VLC: open the video, then `Subtitle → Add Subtitle File...` and pick the `.ass` file (or drop both files in the same folder with matching names).
+
+Options: `--resolution WxH`, `--font-size`, `--display` (seconds each message stays, default 6), `--box-width`, `--box-height` (percent of the video), `--tz` (chat timestamp timezone, defaults to `TIMEZONE` env / `Europe/Moscow`), `--offset` (manual sync shift in seconds), `--out`.
+
 ## Running
 
 ### Docker (recommended)
