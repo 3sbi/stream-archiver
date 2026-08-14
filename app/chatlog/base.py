@@ -1,8 +1,5 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
-
-from app.config import Config
 
 
 @dataclass(frozen=True)

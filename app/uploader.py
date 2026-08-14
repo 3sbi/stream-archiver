@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class UploadWorker:
     def __init__(self) -> None:
         self.queue: queue.Queue[
-            tuple[str, str, Callable[[str, bool], None] | None, bool]
+            tuple[str, str, Callable[[str, bool], None] | None, bool, bool]
         ] = queue.Queue()
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self._first_message_id: int | None = None
@@ -102,7 +102,7 @@ class UploadWorker:
     ) -> None:
         filename = os.path.basename(file_path)
         logger.info(f"Added new file to telegram upload queue: {filename}")
-        self.queue.put((file_path, caption, callback, False))
+        self.queue.put((file_path, caption, callback, False, False))
 
     def enqueue_document(
         self,
@@ -112,11 +112,17 @@ class UploadWorker:
     ) -> None:
         filename = os.path.basename(file_path)
         logger.info(f"Added new document to telegram upload queue: {filename}")
-        self.queue.put((file_path, caption, callback, True))
+        self.queue.put((file_path, caption, callback, True, True))
 
     def _worker(self) -> None:
         while True:
-            file_path, caption, callback, force_document = self.queue.get()
+            (
+                file_path,
+                caption,
+                callback,
+                force_document,
+                second_channel_only,
+            ) = self.queue.get()
             success = False
             try:
                 filename = os.path.basename(file_path)
@@ -131,7 +137,15 @@ class UploadWorker:
 
                 file_size_gb = os.path.getsize(file_path) / 1024 / 1024 / 1024
                 logger.info(f"Uploading: {filename}, size: {file_size_gb:.2f}GiB")
-                if force_document:
+                if second_channel_only:
+                    chat_id = (
+                        Config.TELEGRAM_SECOND_CHANNEL_ID
+                        or Config.TELEGRAM_CHANNEL_ID
+                    )
+                    result = telegram.upload_document_to_chat(
+                        file_path, caption, chat_id
+                    )
+                elif force_document:
                     result = telegram.upload_document_to_chat(
                         file_path, caption, Config.TELEGRAM_CHANNEL_ID
                     )
@@ -141,7 +155,8 @@ class UploadWorker:
                     message_id = telegram.get_message_id(result)
                     logger.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
-                    self._send_to_second_channel([(file_path, caption)])
+                    if not second_channel_only:
+                        self._send_to_second_channel([(file_path, caption)])
                     if os.path.exists(file_path):
                         logger.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)
