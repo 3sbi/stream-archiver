@@ -3,6 +3,7 @@ import random
 import time
 from pathlib import Path
 from threading import Event
+from typing import TypedDict
 
 from websocket import WebSocket, WebSocketTimeoutException, create_connection
 
@@ -16,7 +17,15 @@ RECV_TIMEOUT = 5
 RECONNECT_DELAY = 5
 
 
-def parse_irc_line(line: str) -> dict | None:
+class ParsedIrcLine(TypedDict):
+    tags: dict[str, str]
+    prefix: str | None
+    prefix_nick: str | None
+    command: str | None
+    params: list[str]
+
+
+def parse_irc_line(line: str) -> ParsedIrcLine | None:
     line = line.strip()
     if not line:
         return None
