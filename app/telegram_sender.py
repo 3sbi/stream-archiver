@@ -289,7 +289,12 @@ class TelegramSender:
                 response.raise_for_status()
                 return response.json()["result"]
             except requests.exceptions.ReadTimeout:
-                logger.warning("Telegram media group upload timed out, retrying...")
+                logger.warning(
+                    f"Telegram media group upload timed out "
+                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 600)
             except Exception:
                 logger.exception(
                     f"Media group upload failed "
