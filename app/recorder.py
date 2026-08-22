@@ -75,8 +75,6 @@ class Recorder:
             "pipe:0",
             "-c",
             "copy",
-            "-movflags",
-            "+faststart",
         ]
         if title:
             cmd += ["-metadata", f"title={title}"]
@@ -89,6 +87,11 @@ class Recorder:
             "1",
             "-segment_format",
             "mp4",
+            # -movflags is not propagated by the segment muxer to the per-segment mp4
+            # muxers, so it has to be passed via segment_format_options
+            "-segment_format_options",
+            "movflags=+faststart",
+            
         ]
         if start_number > 0:
             cmd += ["-segment_start_number", str(start_number)]
