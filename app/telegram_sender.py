@@ -132,6 +132,44 @@ class TelegramSender:
                 return None
         return None
 
+    def _get_video_duration(self, video_path: str) -> int | None:
+        if not shutil.which("ffprobe"):
+            logger.warning("ffprobe not found, cannot determine video duration")
+            return None
+
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    video_path,
+                ],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                logger.warning(
+                    f"ffprobe failed for {video_path} "
+                    f"(exit code {result.returncode}): {stderr.strip()}"
+                )
+                return None
+            duration = round(float(result.stdout.decode().strip()))
+            if duration <= 0:
+                logger.warning(f"Invalid duration detected for {video_path}: {duration}")
+                return None
+            logger.debug(f"Detected duration of {duration}s for {video_path}")
+            return duration
+        except Exception:
+            logger.exception(f"Unexpected error detecting duration for {video_path}")
+            return None
+
     def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
         logger.info("Uploading segment as a video...")
         data: dict[str, object] = {
@@ -140,6 +178,9 @@ class TelegramSender:
             "video": f"file://{file_path}",
             "supports_streaming": True,
         }
+        duration = self._get_video_duration(file_path)
+        if duration is not None:
+            data["duration"] = duration
         files: dict[str, tuple[str, bytes, str]] = {}
         thumb_path = self._generate_thumbnail(file_path)
         if thumb_path:
@@ -240,12 +281,12 @@ class TelegramSender:
         chat_id: str,
         file_type: str,
     ) -> list[TelegramMessage] | None:
-        media: list[dict[str, str | bool]] = []
+        media: list[dict[str, str | bool | int]] = []
         upload_files: dict[str, tuple[str, bytes, str]] = {}
         thumb_paths: list[str] = []
 
         for i, (file_path, caption) in enumerate(files):
-            item: dict[str, str | bool] = {
+            item: dict[str, str | bool | int] = {
                 "type": file_type,
                 "media": f"file://{file_path}",
             }
@@ -257,6 +298,9 @@ class TelegramSender:
 
             if file_type == "video":
                 item["supports_streaming"] = True
+                duration = self._get_video_duration(file_path)
+                if duration is not None:
+                    item["duration"] = duration
 
             thumb_path = self._generate_thumbnail(file_path)
             if thumb_path:
