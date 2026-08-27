@@ -64,7 +64,7 @@ class Recorder:
         ]
 
     def _build_ffmpeg_cmd(
-        self, segment_pattern: str, start_number: int = 0, title: str | None = None
+        self, segment_pattern: str, start_number: int = 0
     ) -> list[str]:
         cmd: list[str] = [
             "ffmpeg",
@@ -76,8 +76,6 @@ class Recorder:
             "-c",
             "copy",
         ]
-        if title:
-            cmd += ["-metadata", f"title={title}"]
         cmd += [
             "-f",
             "segment",
@@ -124,10 +122,9 @@ class Recorder:
         url: str,
         segment_pattern: str,
         start_number: int = 0,
-        title: str | None = None,
     ) -> None:
         streamlink_cmd = self._build_streamlink_cmd(url)
-        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number, title)
+        ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number)
         self.streamlink = subprocess.Popen(
             streamlink_cmd,
             stdout=subprocess.PIPE,
@@ -153,7 +150,7 @@ class Recorder:
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
-        self._launch_processes(url, segment_pattern, title=title)
+        self._launch_processes(url, segment_pattern)
         self._start_watcher_thread()
         if self.streamlink and self.ffmpeg:
             logger.info(
@@ -232,7 +229,7 @@ class Recorder:
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
-        self._launch_processes(url, segment_pattern, start_number, self.current_title)
+        self._launch_processes(url, segment_pattern, start_number)
         logger.info(
             f"Recording restarted: {title} | segment_start_number={start_number}"
         )
