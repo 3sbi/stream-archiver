@@ -148,10 +148,22 @@ def main():
                     )
 
                 if recorder.streamlink and recorder.streamlink.poll() is not None:
-                    logger.warning(
-                        "Streamlink exited during grace period (rc=%d)",
-                        recorder.streamlink.returncode,
-                    )
+                    rc = recorder.streamlink.returncode
+                    if rc == 0:
+                        logger.info(
+                            "Streamlink exited cleanly; waiting %ds for possible stream resume",
+                            Config.GRACE_PERIOD,
+                        )
+                    else:
+                        logger.warning(
+                            "Streamlink exited unexpectedly (rc=%d); waiting %ds",
+                            rc,
+                            Config.GRACE_PERIOD,
+                        )
+                    if not in_grace_period:
+                        in_grace_period = True
+                        grace_period_start = time.time()
+                        recorder.in_grace_period = True
 
                 if time.time() - grace_period_start > Config.GRACE_PERIOD:
                     logger.info("🏁 Grace period expired, stream truly ended")
