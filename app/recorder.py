@@ -91,7 +91,6 @@ class Recorder:
             # muxers, so it has to be passed via segment_format_options
             "-segment_format_options",
             "movflags=+faststart",
-            
         ]
         if start_number > 0:
             cmd += ["-segment_start_number", str(start_number)]
@@ -129,10 +128,17 @@ class Recorder:
     ) -> None:
         streamlink_cmd = self._build_streamlink_cmd(url)
         ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number, title)
-        self.streamlink = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
+        self.streamlink = subprocess.Popen(
+            streamlink_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert self.streamlink.stdout is not None
         self.ffmpeg = subprocess.Popen(
             ffmpeg_cmd, stdin=self.streamlink.stdout, stderr=subprocess.PIPE
         )
+        # Important: the parent must not keep an extra copy of the pipe open.
+        self.streamlink.stdout.close()
         self.running = True
 
     def start_recording(self, url: str, title: str, started_at: str, channel_name: str):
@@ -183,12 +189,42 @@ class Recorder:
         self._watcher_thread = None
         logger.info("Recording stopped")
 
-    def restart_recording(self, url: str, title: str):
-        self._stop_process(self.streamlink, "streamlink", timeout=10)
-        self._stop_process(self.ffmpeg, "ffmpeg")
+    def _stop_pipeline(self, timeout: int = 30) -> None:
+        streamlink = self.streamlink
+        ffmpeg = self.ffmpeg
+        # Stop producer first
+        if streamlink and streamlink.poll() is None:
+            streamlink.terminate()
+            try:
+                streamlink.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                logger.warning("Streamlink did not stop, killing")
+                streamlink.kill()
+                streamlink.wait()
+        # Streamlink is gone, so FFmpeg should receive EOF and finalize the MP4.
+        if ffmpeg and ffmpeg.poll() is None:
+            try:
+                ffmpeg.wait(timeout=timeout)
+                logger.info("FFmpeg finalized cleanly (rc=%d)", ffmpeg.returncode)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "FFmpeg did not finalize within %ds, terminating",
+                    timeout,
+                )
+                ffmpeg.terminate()
+                try:
+                    ffmpeg.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.warning("FFmpeg did not stop, killing")
+                    ffmpeg.kill()
+                    ffmpeg.wait()
+        self.streamlink = None
+        self.ffmpeg = None
 
-        segments = [
-            int(f.stem.split("_")[-1])
+    def restart_recording(self, url: str, title: str):
+        self._stop_pipeline()
+        segments: list[int] = [
+            int(f.stem.rsplit("_", 1)[-1])
             for f in Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
         ]
         start_number = max(segments) + 1 if segments else 0
@@ -307,7 +343,7 @@ class Recorder:
     def _finalize_stream(
         self, group: list[tuple[str, str]], uploaded: set[str], session: str
     ) -> None:
-        self._stop_process(self.ffmpeg, "ffmpeg", terminate=False)
+        self._stop_pipeline()
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         group_paths = {f for f, _ in group}
@@ -359,7 +395,7 @@ class Recorder:
         if session is None:
             session = self.current_session
 
-        self._stop_process(self.ffmpeg, "ffmpeg", terminate=False)
+        self._stop_pipeline()
 
         files = sorted(Path(Config.SEGMENTS_DIR).glob(f"{session}_*.mp4"))
         logger.info(
@@ -372,9 +408,7 @@ class Recorder:
                 if str(file) not in uploaded and str(file) not in pending:
                     remaining.append(file)
 
-        logger.info(
-            "upload_remaining: uploading %d remaining segments", len(remaining)
-        )
+        logger.info("upload_remaining: uploading %d remaining segments", len(remaining))
         for file in remaining:
             caption = self.build_caption(file.name)
             uploader.enqueue(str(file), caption)
