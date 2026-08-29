@@ -64,7 +64,7 @@ class Recorder:
         ]
 
     def _build_ffmpeg_cmd(
-        self, segment_pattern: str, start_number: int = 0
+        self, segment_pattern: str, start_number: int = 1
     ) -> list[str]:
         cmd: list[str] = [
             "ffmpeg",
@@ -83,6 +83,8 @@ class Recorder:
             f"{Config.SEGMENT_TIME}",
             "-reset_timestamps",
             "1",
+            "-segment_start_number",
+            str(start_number),
             "-segment_format",
             "mp4",
             # -movflags is not propagated by the segment muxer to the per-segment mp4
@@ -90,8 +92,6 @@ class Recorder:
             "-segment_format_options",
             "movflags=+faststart",
         ]
-        if start_number > 0:
-            cmd += ["-segment_start_number", str(start_number)]
         cmd.append(segment_pattern)
         return cmd
 
@@ -121,7 +121,7 @@ class Recorder:
         self,
         url: str,
         segment_pattern: str,
-        start_number: int = 0,
+        start_number: int = 1,
     ) -> None:
         streamlink_cmd = self._build_streamlink_cmd(url)
         ffmpeg_cmd = self._build_ffmpeg_cmd(segment_pattern, start_number)
@@ -148,7 +148,7 @@ class Recorder:
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(
-            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
+            Config.SEGMENTS_DIR, f"{self.current_session}_part%d.mp4"
         )
         self._launch_processes(url, segment_pattern)
         self._start_watcher_thread()
@@ -221,10 +221,10 @@ class Recorder:
     def restart_recording(self, url: str, title: str):
         self._stop_pipeline()
         segments: list[int] = [
-            int(f.stem.rsplit("_", 1)[-1])
+            int(f.stem.rsplit("_", 1)[-1].removeprefix("part"))
             for f in Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
         ]
-        start_number = max(segments) + 1 if segments else 0
+        start_number = max(segments) + 1 if segments else 1
 
         segment_pattern: str = os.path.join(
             Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
@@ -411,7 +411,7 @@ class Recorder:
             uploader.enqueue(str(file), caption)
 
     def build_caption(self, filename: str) -> str:
-        part = str(int(Path(filename).stem.split("_")[-1]) + 1)
+        part = str(int(Path(filename).stem.rsplit("_", 1)[-1].removeprefix("part")) + 1)
         date = datetime.fromisoformat(self.started_at).astimezone(
             ZoneInfo(Config.TIMEZONE)
         )
