@@ -58,7 +58,6 @@ def check_stream_via_streamlink(url: str) -> bool:
             timeout=30,
             check=False,
         )
-        logger.debug("result:", result)
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         logger.warning("Streamlink check timed out")

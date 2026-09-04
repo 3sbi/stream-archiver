@@ -67,14 +67,15 @@ class WTVClient:
             logger.warning("W.TV streams API request failed: %s", e)
             return None
 
-        for stream in data.get("data", []):
-            if stream.get("state") == "live":
-                title = stream.get("title", "")
+        streams_data = data.get("data", [])
+        for stream in streams_data:
+            if stream.get("state") == "started":
                 stream_id = stream.get("streamId", "")
-                if not title or not stream_id:
+                if not stream_id:
                     return None
-                return StreamInfo(title=title, startedAt=stream_id)
+                return StreamInfo(title=stream.get("title") or Config.CHANNEL, startedAt=stream_id)
 
+        logger.debug("W.TV: no stream with state 'started' found")
         return None
 
 
