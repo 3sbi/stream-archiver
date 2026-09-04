@@ -1,4 +1,5 @@
 import os
+from typing import ClassVar
 
 from dotenv import load_dotenv
 
@@ -7,8 +8,22 @@ load_dotenv()
 
 class Config:
     # We use os.environ instead of os.getenv to raise error if any of these are not present
-    CHANNEL = os.environ["CHANNEL"]
     PLATFORM = os.environ["PLATFORM"]
+    TWITCH_CHANNEL = os.environ.get("TWITCH_CHANNEL", "")
+    KICK_CHANNEL = os.environ.get("KICK_CHANNEL", "")
+    WTV_CHANNEL = os.environ.get("WTV_CHANNEL", "")
+    CHANNELS: ClassVar[dict[str, str]] = {
+        "twitch": TWITCH_CHANNEL,
+        "kick": KICK_CHANNEL,
+        "wtv": WTV_CHANNEL,
+    }
+
+    @classmethod
+    def channel(cls) -> str:
+        ch = cls.CHANNELS.get(cls.PLATFORM, "")
+        if not ch:
+            raise ValueError(f"No channel configured for platform '{cls.PLATFORM}'")
+        return ch
     TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
     TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 

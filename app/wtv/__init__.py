@@ -30,7 +30,7 @@ class WTVClient:
     def _get_user_id(self) -> str | None:
         try:
             response = requests.get(
-                self.API_PROFILES.format(nickname=Config.CHANNEL),
+                self.API_PROFILES.format(nickname=Config.WTV_CHANNEL),
                 headers=self.HEADERS,
                 timeout=30,
             )
@@ -73,7 +73,7 @@ class WTVClient:
                 stream_id = stream.get("streamId", "")
                 if not stream_id:
                     return None
-                return StreamInfo(title=stream.get("title") or Config.CHANNEL, startedAt=stream_id)
+                return StreamInfo(title=stream.get("title") or Config.WTV_CHANNEL, startedAt=stream_id)
 
         logger.debug("W.TV: no stream with state 'started' found")
         return None

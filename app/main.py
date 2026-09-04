@@ -91,7 +91,8 @@ def get_platform() -> tuple[str, str, str]:
             f"PLATFORM must be one of: {', '.join(PLATFORMS)}, got '{Config.PLATFORM}'"
         )
     url_origin = PLATFORMS[platform]["url"]
-    return platform, Config.CHANNEL, f"{url_origin}/{Config.CHANNEL}"
+    channel_name = Config.channel()
+    return platform, channel_name, f"{url_origin}/{channel_name}"
 
 
 def get_stream_info(platform: str):
@@ -129,7 +130,7 @@ def main():
             live = check_stream_via_streamlink(url)
 
             if not live and not stream_was_live:
-                logger.debug("No stream found for %s", Config.CHANNEL)
+                logger.debug("No stream found for %s", Config.channel())
 
             # Stream just started
             if live and not stream_was_live:

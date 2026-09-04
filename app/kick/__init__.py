@@ -29,7 +29,7 @@ class KickClient:
     def get_stream_info(self) -> StreamInfo | None:
         try:
             response = requests.get(
-                f"{self.API_BASE}/channels/{Config.CHANNEL}",
+                f"{self.API_BASE}/channels/{Config.KICK_CHANNEL}",
                 headers=self.HEADERS,
                 timeout=30,
             )

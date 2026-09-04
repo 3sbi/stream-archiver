@@ -1,6 +1,6 @@
-# Twitch/Kick to Telegram archiver
+# Twitch/Kick/W.TV to Telegram archiver
 
-Detects when a live stream begins on Twitch or Kick, records it in real time, and archives the recorded segments in a Telegram channel.
+Detects when a live stream begins on Twitch, Kick, or W.TV, records it in real time, and archives the recorded segments in a Telegram channel.
 
 Optimized for and tested on low-spec machine (i.e. VPS with 1 GiB RAM and 1 vCPU), requires no more than 220Mb.
 
@@ -12,8 +12,10 @@ Copy `.env.example` to `.env` and fill in the values.
 
 | Variable                  | Required | Default                    | Description                                                                                                            |
 | ------------------------- | -------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `CHANNEL`                 | Yes      | —                          | Channel name to monitor and record                                                                                     |
-| `PLATFORM`                | Yes      | —                          | Streaming platform: `twitch` or `kick`                                                                                 |
+| `TWITCH_CHANNEL`          | No       | —                          | Twitch channel name to monitor and record                                                                              |
+| `KICK_CHANNEL`            | No       | —                          | Kick channel name to monitor and record                                                                                |
+| `WTV_CHANNEL`             | No       | —                          | W.TV channel name to monitor and record                                                                                |
+| `PLATFORM`                | Yes      | —                          | Streaming platform: `twitch`, `kick`, or `wtv`                                                                         |
 | `TWITCH_CLIENT_ID`        | No       | —                          | Twitch app client ID (optional — GraphQL API is used by default)                                                       |
 | `TWITCH_CLIENT_SECRET`    | No       | —                          | Twitch app client secret (optional — GraphQL API is used by default)                                                   |
 | `TELEGRAM_BOT_TOKEN`      | Yes      | —                          | Bot token from [@BotFather](https://t.me/BotFather)                                                                    |
@@ -54,5 +56,5 @@ docker compose up -d
 
 ```bash
 pip install -r requirements.txt
-CHANNEL=xqc PLATFORM=twitch python -m app.main
+TWITCH_CHANNEL=xqc PLATFORM=twitch python -m app.main
 ```

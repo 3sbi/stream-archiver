@@ -69,7 +69,7 @@ class TwitchClient:
         try:
             response = requests.get(
                 "https://api.twitch.tv/helix/streams",
-                params={"user_login": Config.CHANNEL},
+                params={"user_login": Config.TWITCH_CHANNEL},
                 headers=headers,
                 timeout=30,
             )
@@ -111,7 +111,7 @@ class TwitchClient:
                         "operationName": "ComscoreStreamingQuery",
                         "variables": {
                             "isClip": False,
-                            "channel": f"{Config.CHANNEL}",
+                            "channel": f"{Config.TWITCH_CHANNEL}",
                             "isLive": True,
                             "clipSlug": "",
                             "isVodOrCollection": False,
