@@ -32,3 +32,14 @@ services:
       - PLATFORM=kick
     volumes:
       - ./data:/data
+
+  wtv-archiver:
+    image: stream-archiver
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PLATFORM=wtv
+    volumes:
+      - ./data:/data

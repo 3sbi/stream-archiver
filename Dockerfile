@@ -14,5 +14,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# https://streamlink.github.io/latest/cli/plugin-sideloading.html#sideloading-locations
+COPY plugins/wtv.py /root/.local/share/streamlink/plugins/wtv.py
 
 CMD ["python", "-m", "app.main"]

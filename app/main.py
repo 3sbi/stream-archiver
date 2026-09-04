@@ -11,6 +11,7 @@ from app.kick import kick
 from app.recorder import recorder
 from app.twitch import twitch
 from app.uploader import uploader
+from app.wtv import wtv
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def check_stream_via_streamlink(url: str) -> bool:
             timeout=30,
             check=False,
         )
+        logger.debug("result:", result)
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         logger.warning("Streamlink check timed out")
@@ -75,6 +77,10 @@ PLATFORMS = {
         "url": "https://kick.com",
         "emoji": "🟢",
     },
+    "wtv": {
+        "url": "https://w.tv",
+        "emoji": "⚪",
+    },
 }
 
 
@@ -92,6 +98,8 @@ def get_platform() -> tuple[str, str, str]:
 def get_stream_info(platform: str):
     if platform == "kick":
         return kick.get_stream_info()
+    if platform == "wtv":
+        return wtv.get_stream_info()
     return twitch.get_stream_info()
 
 
