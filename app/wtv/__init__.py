@@ -73,7 +73,7 @@ class WTVClient:
                 stream_id = stream.get("streamId", "")
                 if not stream_id:
                     return None
-                return StreamInfo(title=stream.get("title") or Config.WTV_CHANNEL, startedAt=stream_id)
+                return StreamInfo(title=stream.get("title") or Config.WTV_CHANNEL, startedAt=stream["startedAt"])
 
         logger.debug("W.TV: no stream with state 'started' found")
         return None

@@ -18,6 +18,7 @@ class WTVStream(TypedDict):
     streamId: str
     title: str
     state: str
+    startedAt: str
     playbackUrl: str
     tags: list[WTVTag]
 
