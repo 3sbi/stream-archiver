@@ -148,7 +148,7 @@ class Recorder:
         )
         db.create_stream(self.current_session, title, started_at)
         segment_pattern: str = os.path.join(
-            Config.SEGMENTS_DIR, f"{self.current_session}_part%d.mp4"
+            Config.SEGMENTS_DIR, f"{self.current_session}_%d.mp4"
         )
         self._launch_processes(url, segment_pattern)
         self._start_watcher_thread()
@@ -221,7 +221,7 @@ class Recorder:
     def restart_recording(self, url: str, title: str):
         self._stop_pipeline()
         segments: list[int] = [
-            int(f.stem.rsplit("_", 1)[-1].removeprefix("part"))
+            int(f.stem.rsplit("_", 1)[-1])
             for f in Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
         ]
         start_number = max(segments) + 1 if segments else 1
@@ -411,7 +411,7 @@ class Recorder:
             uploader.enqueue(str(file), caption)
 
     def build_caption(self, filename: str) -> str:
-        part = str(int(Path(filename).stem.rsplit("_", 1)[-1].removeprefix("part")) + 1)
+        part = str(int(Path(filename).stem.rsplit("_", 1)[-1]) + 1)
         date = datetime.fromisoformat(self.started_at).astimezone(
             ZoneInfo(Config.TIMEZONE)
         )
