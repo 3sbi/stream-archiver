@@ -50,7 +50,7 @@ docker compose up -d
 
 ##### Requirements
 
-- Python 3.12+
+- Python 3.14+
 - ffmpeg
 - Telegram Bot API server
 
