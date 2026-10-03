@@ -31,8 +31,8 @@ Copy `.env.example` to `.env` and fill in the values.
 | `GRACE_PERIOD`            | No       | `240`                      | Seconds to wait after a stream interruption or an unexpected recorder crash before finalizing the upload. If the stream resumes within this window, recording continues in the same session (files will be uploaded as the same media group) |
 | `MIN_FREE_DISK_GB`        | No       | `2`                        | Minimum free disk space in GiB; recording stops when this is reached                                                   |
 | `SEGMENT_TIME`            | No       | `2630`                     | Target segment duration in seconds. Each segment should stay under Telegram's 2 GiB upload limit (~2630s at 6200 kbps) |
-| `DB_PATH`                 | No       | `/data/recorder.db`        | Path to the SQLite database file                                                                                       |
-| `SEGMENTS_DIR`            | No       | `/data/segments`           | Directory for temporary segment files                                                                                  |
+| `DB_PATH`                 | No       | `/data/$PLATFORM/recorder.db` | Path to the SQLite database file. Set it explicitly when running several instances of the same platform, otherwise they would share one database |
+| `SEGMENTS_DIR`            | No       | `/data/$PLATFORM/segments` | Directory for temporary segment files. Must be unique per instance for the same reason as `DB_PATH`                                         |
 | `TIMEZONE`                | No       | `Europe/Moscow`            | Timezone for log timestamps                                                                                            |
 | `LOG_LEVEL`               | No       | `INFO`                     | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`                                                                     |
 
