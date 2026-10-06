@@ -40,7 +40,7 @@ class Recorder:
 
     def check_disk_space(self) -> None:
         free = self.free_space_gb()
-        logger.info(
+        logger.debug(
             f"Disk space check: {free:.2f}GB free (min={Config.MIN_FREE_DISK_GB}GB)"
         )
         if free < Config.MIN_FREE_DISK_GB:
