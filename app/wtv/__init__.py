@@ -17,8 +17,12 @@ class StreamInfo:
 
 
 class WTVClient:
-    API_PROFILES: ClassVar = "https://profiles-service.w.tv/api/v1/profiles/by-nickname/{nickname}"
-    API_STREAMS: ClassVar = "https://streams-search-service.w.tv/api/v1/channels/{channel_id}/streams"
+    API_PROFILES: ClassVar = (
+        "https://profiles-service.w.tv/api/v1/profiles/by-nickname/{nickname}"
+    )
+    API_STREAMS: ClassVar = (
+        "https://streams-search-service.w.tv/api/v1/channels/{channel_id}/streams"
+    )
     HEADERS: ClassVar[dict[str, str]] = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -73,7 +77,10 @@ class WTVClient:
                 stream_id = stream.get("streamId", "")
                 if not stream_id:
                     return None
-                return StreamInfo(title=stream.get("title") or Config.WTV_CHANNEL, startedAt=stream["startedAt"])
+                return StreamInfo(
+                    title=stream.get("title") or Config.WTV_CHANNEL,
+                    startedAt=stream["startedAt"],
+                )
 
         logger.debug("W.TV: no stream with state 'started' found")
         return None

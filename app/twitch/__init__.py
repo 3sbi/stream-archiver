@@ -9,6 +9,7 @@ from app.config import Config
 from app.twitch.types import (
     AuthResponse,
     ComscoreStreamingQueryResponses,
+    HelixUsersResponse,
     StreamsApiResponse,
 )
 
@@ -25,6 +26,11 @@ class TwitchClient:
     def __init__(self):
         self.token = None
         self.refresh_at = 0
+        self.user_id: str | None = None
+
+    @staticmethod
+    def has_credentials() -> bool:
+        return bool(Config.TWITCH_CLIENT_ID and Config.TWITCH_CLIENT_SECRET)
 
     def refresh_token(self):
         try:
@@ -54,12 +60,47 @@ class TwitchClient:
         return self.token
 
     def get_stream_info(self) -> StreamInfo | None:
-        if Config.TWITCH_CLIENT_ID and Config.TWITCH_CLIENT_SECRET:
+        """Helix API when client id/secret are set, open GraphQL endpoint as fallback."""
+        if self.has_credentials() and Config.TWITCH_CLIENT_ID:
             return self.get_stream_info_from_api(Config.TWITCH_CLIENT_ID)
         return self.get_stream_info_from_gql()
 
+    def get_user_id(self) -> str | None:
+        """Resolves the configured channel's broadcaster user id via Helix (cached)."""
+        if self.user_id:
+            return self.user_id
+        if not self.has_credentials() or not Config.TWITCH_CLIENT_ID:
+            return None
+        token = self.get_token()
+        if not token:
+            return None
+        headers: Mapping[str, str] = {
+            "Client-ID": Config.TWITCH_CLIENT_ID,
+            "Authorization": f"Bearer {token}",
+        }
+        try:
+            response = requests.get(
+                "https://api.twitch.tv/helix/users",
+                params={"login": Config.TWITCH_CHANNEL},
+                headers=headers,
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException:
+            logger.warning("Twitch users lookup failed")
+            return None
+
+        payload: HelixUsersResponse = response.json()
+        if not payload["data"]:
+            logger.warning(f"Twitch user '{Config.TWITCH_CHANNEL}' not found")
+            return None
+        self.user_id = payload["data"][0]["id"]
+        return self.user_id
+
     def get_stream_info_from_api(self, client_id: str) -> StreamInfo | None:
         token = self.get_token()
+        if not token:
+            return None
         logger.info(f"Using Twitch Client-ID: {client_id}")
         headers: Mapping[str, str] = {
             "Client-ID": client_id,

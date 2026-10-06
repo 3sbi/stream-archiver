@@ -24,6 +24,7 @@ class Config:
         if not ch:
             raise ValueError(f"No channel configured for platform '{cls.PLATFORM}'")
         return ch
+
     TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
     TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 
@@ -41,6 +42,8 @@ class Config:
 
     METAINFO_CHECK_INTERVAL = int(os.getenv("METAINFO_CHECK_INTERVAL", "120"))
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
+    # streamlink watchdog check while idle; only used when EventSub is active (Twitch + client credentials)
+    IDLE_CHECK_INTERVAL = int(os.getenv("IDLE_CHECK_INTERVAL", "60"))
     GRACE_PERIOD = int(os.getenv("GRACE_PERIOD", "240"))
     MIN_FREE_DISK_GB = int(os.getenv("MIN_FREE_DISK_GB", "2"))
     DB_PATH = os.getenv("DB_PATH", f"/data/{PLATFORM}/recorder.db")

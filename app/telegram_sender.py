@@ -162,7 +162,9 @@ class TelegramSender:
                 return None
             duration = round(float(result.stdout.decode().strip()))
             if duration <= 0:
-                logger.warning(f"Invalid duration detected for {video_path}: {duration}")
+                logger.warning(
+                    f"Invalid duration detected for {video_path}: {duration}"
+                )
                 return None
             logger.debug(f"Detected duration of {duration}s for {video_path}")
             return duration
@@ -357,7 +359,7 @@ class TelegramSender:
     def get_message_id(result: TelegramMessage) -> int | None:
         try:
             return result["message_id"]
-        except (KeyError, TypeError):
+        except KeyError, TypeError:
             return None
 
 

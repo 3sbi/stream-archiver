@@ -136,7 +136,7 @@ class UploadWorker:
             if callback:
                 try:
                     callback(file_path, success)
-                except (KeyError, RuntimeError, TypeError, ValueError):
+                except KeyError, RuntimeError, TypeError, ValueError:
                     logger.exception("Upload callback failed")
             self.queue.task_done()
 

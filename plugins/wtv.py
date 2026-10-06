@@ -28,8 +28,12 @@ def _find_category(tags: list[dict[str, str]]) -> str | None:
     re.compile(r"https?://w\.tv/(?P<channel>[^/?#]+)"),
 )
 class WTV(Plugin):
-    _API_PROFILES = "https://profiles-service.w.tv/api/v1/profiles/by-nickname/{nickname}"
-    _API_STREAMS = "https://streams-search-service.w.tv/api/v1/channels/{channel_id}/streams"
+    _API_PROFILES = (
+        "https://profiles-service.w.tv/api/v1/profiles/by-nickname/{nickname}"
+    )
+    _API_STREAMS = (
+        "https://streams-search-service.w.tv/api/v1/channels/{channel_id}/streams"
+    )
 
     def _get_streams(self):
         channel = self.match.group("channel")
@@ -84,7 +88,9 @@ class WTV(Plugin):
                 self.title = stream["title"]
                 self.author = channel
                 self.category = _find_category(stream["tags"])
-                return HLSStream.parse_variant_playlist(self.session, stream["playbackUrl"])
+                return HLSStream.parse_variant_playlist(
+                    self.session, stream["playbackUrl"]
+                )
 
 
 __plugin__ = WTV

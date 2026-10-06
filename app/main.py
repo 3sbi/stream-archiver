@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import threading
 import time
 import traceback
 
@@ -10,6 +11,7 @@ from app.config import Config
 from app.kick import kick
 from app.recorder import recorder
 from app.twitch import twitch
+from app.twitch.eventsub import EventSubListener
 from app.uploader import uploader
 from app.wtv import wtv
 
@@ -118,6 +120,29 @@ def main():
         f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
     )
     uploader.start()
+
+    # Hybrid mode: EventSub pushes stream.online/offline for fast detection,
+    # streamlink polling stays as the authoritative check / watchdog.
+    eventsub_wake = threading.Event()
+    eventsub_active = False
+    if platform == "twitch":
+        if twitch.has_credentials():
+            listener = EventSubListener(
+                twitch,
+                on_stream_online=lambda _event: eventsub_wake.set(),
+                on_stream_offline=lambda _event: eventsub_wake.set(),
+            )
+            listener.start()
+            eventsub_active = True
+            logger.info(
+                "EventSub listener started (idle watchdog check every %ds)",
+                Config.IDLE_CHECK_INTERVAL,
+            )
+        else:
+            logger.info(
+                "Twitch client id/secret not set; EventSub disabled, GraphQL fallback"
+            )
+
     stream_was_live: bool = False
     in_grace_period: bool = False
     grace_period_start: float = 0
@@ -125,6 +150,7 @@ def main():
 
     while True:
         try:
+            eventsub_wake.clear()
             log_memory()
 
             live = check_stream_via_streamlink(url)
@@ -219,7 +245,13 @@ def main():
             logger.exception("MAIN LOOP ERROR")
             traceback.print_exc()
 
-        time.sleep(Config.CHECK_INTERVAL)
+        # EventSub notification wakes the loop immediately; while idle with
+        # EventSub active the streamlink watchdog check runs less frequently.
+        if eventsub_active and not stream_was_live:
+            wake_timeout = Config.IDLE_CHECK_INTERVAL
+        else:
+            wake_timeout = Config.CHECK_INTERVAL
+        eventsub_wake.wait(wake_timeout)
 
 
 if __name__ == "__main__":

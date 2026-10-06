@@ -283,7 +283,7 @@ class Recorder:
                     with lock:
                         pending[str(file)] = now
                 time.sleep(10)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 logger.error("_individual_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
@@ -297,7 +297,7 @@ class Recorder:
                 self._collect_new_segments_for_group(session, uploaded, group)
                 self._flush_group_if_needed(group, uploaded)
                 time.sleep(10)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 logger.error("_group_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
