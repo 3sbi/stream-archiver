@@ -275,7 +275,7 @@ class Recorder:
                                 file.name,
                             )
                             pending.pop(str(file), None)
-                    caption = self.build_caption(file.name)
+                    caption = self.build_caption()
                     logger.debug(
                         "_individual_watcher: queuing %s for upload", file.name
                     )
@@ -317,7 +317,7 @@ class Recorder:
             age = now - file.stat().st_mtime
             if age < Config.SEGMENT_TIME:
                 continue
-            caption = self.build_caption(file.name)
+            caption = self.build_caption()
             group.append((file_str, caption))
             logger.debug("_group_watcher: collected %s", file.name)
 
@@ -348,7 +348,7 @@ class Recorder:
             file_str = str(file)
             if file_str in uploaded or file_str in group_paths:
                 continue
-            caption = self.build_caption(file.name)
+            caption = self.build_caption()
             group.append((file_str, caption))
             logger.debug("_finalize_stream: collected remaining segment %s", file.name)
 
@@ -407,15 +407,14 @@ class Recorder:
 
         logger.info("upload_remaining: uploading %d remaining segments", len(remaining))
         for file in remaining:
-            caption = self.build_caption(file.name)
+            caption = self.build_caption()
             uploader.enqueue(str(file), caption)
 
-    def build_caption(self, filename: str) -> str:
-        part = str(int(Path(filename).stem.rsplit("_", 1)[-1]) + 1)
+    def build_caption(self) -> str:
         date = datetime.fromisoformat(self.started_at).astimezone(
             ZoneInfo(Config.TIMEZONE)
         )
-        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}\n\nPart №{part}"
+        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}"
         return caption[:1024]
 
 
