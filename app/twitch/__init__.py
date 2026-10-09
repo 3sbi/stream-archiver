@@ -101,7 +101,7 @@ class TwitchClient:
         token = self.get_token()
         if not token:
             return None
-        logger.info(f"Using Twitch Client-ID: {client_id}")
+        logger.debug(f"Using Twitch Client-ID: {client_id}")
         headers: Mapping[str, str] = {
             "Client-ID": client_id,
             "Authorization": f"Bearer {token}",
@@ -114,6 +114,12 @@ class TwitchClient:
                 headers=headers,
                 timeout=30,
             )
+            if response.status_code == 429:
+                logger.warning(
+                    "Twitch API rate limited (reset at %s)",
+                    response.headers.get("Ratelimit-Reset"),
+                )
+                return None
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
             logger.warning("Twitch API connection failed (network/DNS error)")

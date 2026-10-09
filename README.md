@@ -16,7 +16,7 @@ Copy `.env.example` to `.env` and fill in the values.
 | `KICK_CHANNEL`            | No       | —                          | Kick channel name to monitor and record                                                                                |
 | `WTV_CHANNEL`             | No       | —                          | W.TV channel name to monitor and record                                                                                |
 | `PLATFORM`                | Yes      | —                          | Streaming platform: `twitch`, `kick`, or `wtv`                                                                         |
-| `TWITCH_CLIENT_ID`        | No       | —                          | Twitch app client ID. Enables EventSub (stream.online/offline push events) and Helix API; GraphQL fallback is used when unset |
+| `TWITCH_CLIENT_ID`        | No       | —                          | Twitch app client ID. Enables Helix API for live-status polling and stream info; GraphQL fallback is used when unset |
 | `TWITCH_CLIENT_SECRET`    | No       | —                          | Twitch app client secret (same effect as client ID above)                                                             |
 | `TELEGRAM_BOT_TOKEN`      | Yes      | —                          | Bot token from [@BotFather](https://t.me/BotFather)                                                                    |
 | `TELEGRAM_CHANNEL_ID`     | Yes      | —                          | Target channel/chat ID or public handle starting with @                                                                |
@@ -28,7 +28,7 @@ Copy `.env.example` to `.env` and fill in the values.
 | `TELEGRAM_WATERMARK_TEXT` | No       | —                          | Text to render as a watermark on the video (set to `channel_name` to use the channel name, or leave empty to disable)  |
 | `GROUP_SEGMENTS`          | No       | `false`                    | When `true`, segments are collected and sent as a media group once the stream ends or disk space is low                |
 | `CHECK_INTERVAL`          | No       | `10`                       | Seconds between live-status checks                                                                                     |
-| `IDLE_CHECK_INTERVAL`     | No       | `60`                       | Seconds between streamlink watchdog checks while idle (only used when EventSub is active: Twitch + client credentials) |
+| `IDLE_CHECK_INTERVAL`     | No       | `1`                        | Seconds between Helix live-status polls while idle (only used with Twitch + client credentials; otherwise the streamlink watchdog at `CHECK_INTERVAL` is used) |
 | `GRACE_PERIOD`            | No       | `240`                      | Seconds to wait after a stream interruption or an unexpected recorder crash before finalizing the upload. If the stream resumes within this window, recording continues in the same session (files will be uploaded as the same media group) |
 | `MIN_FREE_DISK_GB`        | No       | `2`                        | Minimum free disk space in GiB; recording stops when this is reached                                                   |
 | `SEGMENT_TIME`            | No       | `2630`                     | Target segment duration in seconds. Each segment should stay under Telegram's 2 GiB upload limit (~2630s at 6200 kbps) |

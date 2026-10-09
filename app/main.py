@@ -1,7 +1,6 @@
 import logging
 import os
 import subprocess
-import threading
 import time
 import traceback
 
@@ -11,7 +10,6 @@ from app.config import Config
 from app.kick import kick
 from app.recorder import recorder
 from app.twitch import twitch
-from app.twitch.eventsub import EventSubListener
 from app.uploader import uploader
 from app.wtv import wtv
 
@@ -121,27 +119,16 @@ def main():
     )
     uploader.start()
 
-    # Hybrid mode: EventSub pushes stream.online/offline for fast detection,
-    # streamlink polling stays as the authoritative check / watchdog.
-    eventsub_wake = threading.Event()
-    eventsub_active = False
-    if platform == "twitch":
-        if twitch.has_credentials():
-            listener = EventSubListener(
-                twitch,
-                on_stream_online=lambda _event: eventsub_wake.set(),
-                on_stream_offline=lambda _event: eventsub_wake.set(),
-            )
-            listener.start()
-            eventsub_active = True
-            logger.info(
-                "EventSub listener started (idle watchdog check every %ds)",
-                Config.IDLE_CHECK_INTERVAL,
-            )
-        else:
-            logger.info(
-                "Twitch client id/secret not set; EventSub disabled, GraphQL fallback"
-            )
+    # Twitch with client credentials: poll the Helix API for live status while
+    # idle instead of spawning a streamlink subprocess every tick. EventSub
+    # WebSocket is not usable here because it rejects app access tokens.
+    helix_polling = platform == "twitch" and twitch.has_credentials()
+    if helix_polling:
+        logger.info(
+            "Helix idle polling enabled (check every %ds)", Config.IDLE_CHECK_INTERVAL
+        )
+    else:
+        logger.info("Helix idle polling disabled; using streamlink watchdog")
 
     stream_was_live: bool = False
     in_grace_period: bool = False
@@ -150,17 +137,22 @@ def main():
 
     while True:
         try:
-            eventsub_wake.clear()
             log_memory()
 
-            live = check_stream_via_streamlink(url)
+            if helix_polling and not stream_was_live:
+                info = twitch.get_stream_info()
+                live = info is not None
+            else:
+                info = None
+                live = check_stream_via_streamlink(url)
 
             if not live and not stream_was_live:
                 logger.debug("No stream found for %s", Config.channel())
 
             # Stream just started
             if live and not stream_was_live:
-                info = get_stream_info(platform)
+                if info is None:
+                    info = get_stream_info(platform)
                 if info:
                     logger.info("🚀 LIVE STREAM DETECTED")
                     recorder.start_recording(
@@ -245,13 +237,13 @@ def main():
             logger.exception("MAIN LOOP ERROR")
             traceback.print_exc()
 
-        # EventSub notification wakes the loop immediately; while idle with
-        # EventSub active the streamlink watchdog check runs less frequently.
-        if eventsub_active and not stream_was_live:
+        # While idle with Helix polling active, poll quickly for stream start;
+        # once live, fall back to the slower streamlink watchdog.
+        if helix_polling and not stream_was_live:
             wake_timeout = Config.IDLE_CHECK_INTERVAL
         else:
             wake_timeout = Config.CHECK_INTERVAL
-        eventsub_wake.wait(wake_timeout)
+        time.sleep(wake_timeout)
 
 
 if __name__ == "__main__":

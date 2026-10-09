@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import TypedDict
 
 
 class AuthResponse(TypedDict):
@@ -74,48 +74,3 @@ class HelixUser(TypedDict):
 
 class HelixUsersResponse(TypedDict):
     data: list[HelixUser]
-
-
-class EventSubMetadata(TypedDict, total=False):
-    message_id: str
-    message_type: str
-    message_timestamp: str
-
-
-class EventSubSession(TypedDict, total=False):
-    id: str
-    status: str
-    connected_at: str
-    keepalive_timeout_seconds: int
-    reconnect_url: str
-
-
-class EventSubSubscription(TypedDict, total=False):
-    id: str
-    type: str
-    version: str
-    status: str
-    condition: dict[str, Any]
-    transport: dict[str, Any]
-
-
-class EventSubMessage(TypedDict, total=False):
-    metadata: EventSubMetadata
-    payload: dict[
-        str, Any
-    ]  # welcome/reconnect: {"session": ...}, notification: {"subscription": ..., "event": ...}
-
-
-class StreamOnlineEvent(TypedDict, total=False):
-    id: str
-    broadcaster_user_id: str
-    broadcaster_user_login: str
-    broadcaster_user_name: str
-    type: str
-    started_at: str
-
-
-class StreamOfflineEvent(TypedDict, total=False):
-    broadcaster_user_id: str
-    broadcaster_user_login: str
-    broadcaster_user_name: str
