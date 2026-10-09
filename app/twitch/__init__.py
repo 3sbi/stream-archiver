@@ -101,7 +101,6 @@ class TwitchClient:
         token = self.get_token()
         if not token:
             return None
-        logger.debug(f"Using Twitch Client-ID: {client_id}")
         headers: Mapping[str, str] = {
             "Client-ID": client_id,
             "Authorization": f"Bearer {token}",
