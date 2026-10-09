@@ -2,7 +2,6 @@ import logging
 import os
 import subprocess
 import time
-import traceback
 
 import psutil
 
@@ -235,7 +234,6 @@ def main():
 
         except Exception:
             logger.exception("MAIN LOOP ERROR")
-            traceback.print_exc()
 
         # While idle with Helix polling active, poll quickly for stream start;
         # once live, fall back to the slower streamlink watchdog.

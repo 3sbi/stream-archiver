@@ -122,7 +122,7 @@ class TwitchClient:
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
             logger.warning("Twitch API connection failed (network/DNS error)")
-            raise
+            return None
         except requests.exceptions.RequestException:
             logger.warning("Twitch API request failed")
             return None
@@ -169,7 +169,7 @@ class TwitchClient:
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
             logger.warning("Twitch GraphQL connection failed (network/DNS error)")
-            raise
+            return None
         except requests.exceptions.RequestException:
             logger.warning("Twitch GraphQL request failed")
             return None
