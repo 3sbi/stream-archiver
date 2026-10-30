@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from app.config import Config
@@ -6,8 +7,9 @@ from app.config import Config
 
 class Database:
     def __init__(self):
-        Path(Config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(Config.DB_PATH, check_same_thread=False)
+        self.path = Config.DB_PATH
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.create_tables()
 
     def get_uploaded_files(self):
@@ -36,7 +38,27 @@ class Database:
             uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_upload_attempts (
+            filename TEXT PRIMARY KEY,
+            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
         self.conn.commit()
+
+    def claim_group_upload(self, filenames: list[str]) -> bool:
+        # A separate transaction makes the claim atomic across workers and restarts.
+        # shortcut: failed attempts need manual verification, add recovery before retries.
+        with closing(sqlite3.connect(self.path)) as conn:
+            try:
+                with conn:
+                    conn.executemany(
+                        "INSERT INTO group_upload_attempts (filename) VALUES (?)",
+                        [(filename,) for filename in filenames],
+                    )
+            except sqlite3.IntegrityError:
+                return False
+        return True
 
     def create_stream(self, session_id: str, title: str, started_at: str):
         cur = self.conn.cursor()

@@ -57,6 +57,22 @@ class UploadWorker:
             return uploaded_set
 
         try:
+            uploaded_set = {
+                path for path, _ in files if db.is_uploaded(os.path.basename(path))
+            }
+            files = [
+                (path, caption) for path, caption in files if path not in uploaded_set
+            ]
+            if not files:
+                return uploaded_set
+            if not db.claim_group_upload([os.path.basename(path) for path, _ in files]):
+                logger.warning(
+                    "Group upload already attempted; verify delivery before retrying. "
+                    "Keeping local files: %s",
+                    [os.path.basename(path) for path, _ in files],
+                )
+                return uploaded_set
+
             file_type = (
                 "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
             )
@@ -65,6 +81,11 @@ class UploadWorker:
                 chat_id=Config.TELEGRAM_CHANNEL_ID,
                 file_type=file_type,
             )
+            if not result:
+                logger.warning(
+                    "Group delivery unconfirmed; keeping local files and blocking "
+                    "automatic retries until delivery is verified"
+                )
             if result:
                 first_id = telegram.get_message_id(result[0])
                 if self._first_message_id is None and first_id is not None:
@@ -85,12 +106,8 @@ class UploadWorker:
                         os.remove(file_path)
         except Exception:
             logger.exception("Upload group error")
-            for file_path, _ in files:
-                if os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except OSError:
-                        pass
+            # Don't delete files on error to avoid re-uploading duplicates if they were actually sent
+            pass
 
         return uploaded_set
 
@@ -126,7 +143,10 @@ class UploadWorker:
                     message_id = telegram.get_message_id(result)
                     logger.info(f"Uploaded file: {filename}")
                     db.mark_uploaded(filename, message_id)
-                    self._send_to_second_channel([(file_path, caption)])
+                    try:
+                        self._send_to_second_channel([(file_path, caption)])
+                    except Exception:
+                        logger.exception("Failed to upload to second channel")
                     if os.path.exists(file_path):
                         logger.info(f"Removing uploaded file: {filename}")
                         os.remove(file_path)

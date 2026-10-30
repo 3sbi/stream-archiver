@@ -46,6 +46,31 @@ Each platform runs as a separate service with its own environment file and data 
 docker compose up -d
 ```
 
+### Group upload failures
+
+Recording sessions do not overlap. If the previous watcher is still finalizing
+uploads, the main loop retries starting the next recording on later polls.
+
+Main-channel batches are recorded in SQLite's `group_upload_attempts` table before
+sending. Each file is attempted once, including across restarts. A timeout or lost
+response may mean Telegram accepted the album, so failed attempts keep their local
+files and are not automatically retried. This also applies to confirmed failures.
+
+Verify the affected album in the main channel before retrying. If it is absent,
+stop that recorder instance and remove only the affected filenames from
+`group_upload_attempts` in its database. Retain the files and the
+`uploaded_segments` records. There is currently no startup recovery of old sessions,
+so clearing an attempt alone does not schedule a retry after restarting.
+
+### Tests
+
+```bash
+uv run python -m unittest discover -s tests
+uv run ruff check app plugins tests
+```
+
+Regression tests use temporary SQLite databases and mock Telegram requests.
+
 ### Manually
 
 ##### Requirements

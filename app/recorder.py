@@ -139,6 +139,9 @@ class Recorder:
         self.running = True
 
     def start_recording(self, url: str, title: str, started_at: str, channel_name: str):
+        # shortcut: starts wait for final uploads, isolate session state to allow overlap.
+        if self._watcher_thread is not None and self._watcher_thread.is_alive():
+            raise RuntimeError("Previous recording watcher is still running; retry later")
         self.check_disk_space()
         uploader.reset_thread_anchor()
         self.current_title = title
@@ -183,7 +186,8 @@ class Recorder:
             self._watcher_thread.join(timeout=60)
             if self._watcher_thread.is_alive():
                 logger.warning("Watcher thread did not exit within 60s")
-        self._watcher_thread = None
+        if self._watcher_thread is not None and not self._watcher_thread.is_alive():
+            self._watcher_thread = None
         logger.info("Recording stopped")
 
     def _stop_pipeline(self, timeout: int = 30) -> None:
@@ -220,9 +224,17 @@ class Recorder:
 
     def restart_recording(self, url: str, title: str):
         self._stop_pipeline()
-        segments: list[int] = [
-            int(f.stem.rsplit("_", 1)[-1])
+        filenames = {
+            f.name
             for f in Path(Config.SEGMENTS_DIR).glob(f"{self.current_session}_*.mp4")
+        }
+        # Successfully uploaded files may already have been deleted from disk.
+        filenames.update(db.get_uploaded_files())
+        pattern = re.compile(rf"{re.escape(self.current_session)}_(\d+)\.mp4")
+        segments: list[int] = [
+            int(match[1])
+            for filename in filenames
+            if (match := pattern.fullmatch(filename))
         ]
         start_number = max(segments) + 1 if segments else 1
 
@@ -324,18 +336,20 @@ class Recorder:
     def _flush_group_if_needed(
         self, group: list[tuple[str, str]], uploaded: set[str]
     ) -> None:
+        low_disk = False
         try:
             self.check_disk_space()
         except RuntimeError:
             logger.warning("Low disk space, flushing collected segments")
-            uploaded_paths = self._upload_group_batch(group, uploaded)
-            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
-            return
+            low_disk = True
 
-        while len(group) >= MAX_GROUP_UPLOAD_SIZE:
+        while group and (low_disk or len(group) >= MAX_GROUP_UPLOAD_SIZE):
             batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
+            if not uploaded_paths:
+                logger.warning("Group upload made no progress; stopping flush")
+                break
 
     def _finalize_stream(
         self, group: list[tuple[str, str]], uploaded: set[str], session: str
@@ -363,7 +377,8 @@ class Recorder:
             uploaded_paths = self._upload_group_batch(batch, uploaded)
             group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
             if not uploaded_paths:
-                time.sleep(10)
+                logger.warning("Group upload made no progress; keeping local files")
+                break
 
     def _upload_group_batch(
         self, batch: list[tuple[str, str]], uploaded: set[str]

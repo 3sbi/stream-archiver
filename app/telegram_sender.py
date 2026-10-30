@@ -162,7 +162,9 @@ class TelegramSender:
                 return None
             duration = round(float(result.stdout.decode().strip()))
             if duration <= 0:
-                logger.warning(f"Invalid duration detected for {video_path}: {duration}")
+                logger.warning(
+                    f"Invalid duration detected for {video_path}: {duration}"
+                )
                 return None
             logger.debug(f"Detected duration of {duration}s for {video_path}")
             return duration
@@ -170,10 +172,12 @@ class TelegramSender:
             logger.exception(f"Unexpected error detecting duration for {video_path}")
             return None
 
-    def _upload_video(self, file_path: str, caption: str) -> TelegramMessage:
+    def _upload_video(
+        self, file_path: str, caption: str, chat_id: str | None = None
+    ) -> TelegramMessage:
         logger.info("Uploading segment as a video...")
         data: dict[str, object] = {
-            "chat_id": Config.TELEGRAM_CHANNEL_ID,
+            "chat_id": chat_id if chat_id is not None else Config.TELEGRAM_CHANNEL_ID,
             "caption": caption,
             "video": f"file://{file_path}",
             "supports_streaming": True,
@@ -243,6 +247,16 @@ class TelegramSender:
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.RequestException,
+            ) as e:
+                logger.error(
+                    f"Upload connection error "
+                    f"(attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                # Don't retry on connection errors to avoid duplicates
+                break
             except Exception:
                 logger.exception(
                     f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
@@ -266,6 +280,15 @@ class TelegramSender:
                 )
                 time.sleep(delay)
                 delay = min(delay * 2, 600)
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.RequestException,
+            ) as e:
+                logger.error(
+                    f"Second channel upload connection error "
+                    f"(attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                break
             except Exception:
                 logger.exception(
                     f"Second channel upload failed "
@@ -281,6 +304,24 @@ class TelegramSender:
         chat_id: str,
         file_type: str,
     ) -> list[TelegramMessage] | None:
+        if not 1 <= len(files) <= 10:
+            raise ValueError("Upload batches must contain 1 to 10 files")
+        if len(files) == 1:
+            file_path, caption = files[0]
+            try:
+                if file_type == "video":
+                    message = self._upload_video(file_path, caption, chat_id)
+                else:
+                    message = self._upload_document(file_path, caption, chat_id)
+                return [message]
+            except Exception as exc:
+                logger.error(
+                    "Single-file batch upload failed (%s); not retrying because "
+                    "delivery may have succeeded",
+                    type(exc).__name__,
+                )
+                return None
+
         media: list[dict[str, str | bool | int]] = []
         upload_files: dict[str, tuple[str, bytes, str]] = {}
         thumb_paths: list[str] = []
@@ -320,44 +361,35 @@ class TelegramSender:
             "chat_id": chat_id,
             "media": json.dumps(media),
         }
-        delay = 10
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(
-                    f"{self.base_url}/sendMediaGroup",
-                    data=data,
-                    timeout=(30, 1800),
-                    files=upload_files,
-                )
-                response.raise_for_status()
-                return response.json()["result"]
-            except requests.exceptions.ReadTimeout:
-                logger.warning(
-                    f"Telegram media group upload timed out "
-                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-            except Exception:
-                logger.exception(
-                    f"Media group upload failed "
-                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-        for p in thumb_paths:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
+        try:
+            response = requests.post(
+                f"{self.base_url}/sendMediaGroup",
+                data=data,
+                timeout=(30, 1800),
+                files=upload_files,
+            )
+            response.raise_for_status()
+            return response.json()["result"]
+        except Exception as exc:
+            # A lost response does not mean Telegram rejected the album.
+            logger.error(
+                "Media group upload failed (%s); not retrying because delivery "
+                "may have succeeded",
+                type(exc).__name__,
+            )
+        finally:
+            for p in thumb_paths:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         return None
 
     @staticmethod
     def get_message_id(result: TelegramMessage) -> int | None:
         try:
             return result["message_id"]
-        except (KeyError, TypeError):
+        except KeyError, TypeError:
             return None
 
 
