@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import requests
 
@@ -17,16 +17,27 @@ logger = logging.getLogger(__name__)
 MAX_THUMBNAIL_SIZE = 200 * 1024  # 200 KB
 
 
+class UploadError(Exception):
+    """Base class for upload failures."""
+
+
+class PermanentUploadError(UploadError):
+    """Telegram rejected the request; nothing was delivered."""
+
+
+class RateLimitUploadError(UploadError):
+    """Telegram rate-limited the request; nothing was delivered."""
+
+
+class AmbiguousUploadError(UploadError):
+    """The request may have been delivered; avoid resending blindly."""
+
+
 class TelegramMessage(TypedDict):
     message_id: int
     date: int
     text: NotRequired[str]
     caption: NotRequired[str]
-
-
-class TelegramResponse(TypedDict):
-    ok: bool
-    result: TelegramMessage
 
 
 class TelegramSender:
@@ -172,6 +183,96 @@ class TelegramSender:
             logger.exception(f"Unexpected error detecting duration for {video_path}")
             return None
 
+    @staticmethod
+    def _http_error_details(exc: requests.HTTPError) -> str:
+        response = exc.response
+        if response is None:
+            return str(exc)
+        description = ""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                description = str(
+                    payload.get("description") or payload.get("error_code") or ""
+                )
+        except ValueError:
+            description = (response.text or "").strip()
+        details = f"HTTP {response.status_code}"
+        if description:
+            details = f"{details}: {description}"
+        return details
+
+    @staticmethod
+    def _retry_after(response: requests.Response | None) -> int:
+        if response is None:
+            return 0
+        try:
+            payload = response.json()
+            return int(payload.get("parameters", {}).get("retry_after", 0))
+        except AttributeError, TypeError, ValueError:
+            return 0
+
+    def _classify_error(self, exc: Exception) -> UploadError:
+        if isinstance(exc, UploadError):
+            return exc
+        if isinstance(exc, requests.HTTPError):
+            status = exc.response.status_code if exc.response is not None else None
+            details = self._http_error_details(exc)
+            if status == 429:
+                return RateLimitUploadError(details)
+            if status is not None and 400 <= status < 500:
+                return PermanentUploadError(details)
+            return AmbiguousUploadError(details)
+        return AmbiguousUploadError(f"{type(exc).__name__}: {exc}")
+
+    def _post(
+        self,
+        url: str,
+        *,
+        data: dict[str, object],
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+        timeout: float | tuple[float, float],
+    ) -> requests.Response:
+        delay = 5
+        max_attempts = 5
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = requests.post(url, data=data, files=files, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 429 and attempt < max_attempts:
+                    wait = max(self._retry_after(exc.response), delay)
+                    logger.warning(
+                        "Telegram rate limit hit (%s, attempt %d/%d), retrying in %ss",
+                        url.rsplit("/", 1)[-1],
+                        attempt,
+                        max_attempts,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    delay = min(delay * 2, 60)
+                    continue
+                raise self._classify_error(exc) from exc
+            except Exception as exc:
+                raise self._classify_error(exc) from exc
+        raise RateLimitUploadError("rate limit retries exhausted")
+
+    def _request_json(
+        self,
+        url: str,
+        *,
+        data: dict[str, object],
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+        timeout: float | tuple[float, float],
+    ) -> Any:
+        response = self._post(url, data=data, files=files, timeout=timeout)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise AmbiguousUploadError("unreadable response from Telegram") from exc
+
     def _upload_video(
         self, file_path: str, caption: str, chat_id: str | None = None
     ) -> TelegramMessage:
@@ -193,21 +294,23 @@ class TelegramSender:
                 files["thumbnail"] = ("thumb.jpg", thumb_fh.read(), "image/jpeg")
 
         try:
-            response = requests.post(
-                url=f"{self.base_url}/sendVideo",
+            payload = self._request_json(
+                f"{self.base_url}/sendVideo",
                 data=data,
-                timeout=1800,
                 files=files,
+                timeout=1800,
             )
-            response.raise_for_status()
-            payload: TelegramResponse = response.json()
-            return payload["result"]
         finally:
             if thumb_path:
                 try:
                     os.remove(thumb_path)
                 except OSError:
                     pass
+
+        try:
+            return payload["result"]
+        except (KeyError, TypeError) as exc:
+            raise AmbiguousUploadError("unexpected sendVideo response") from exc
 
     def _upload_document(self, file_path: str, caption: str, chat_id: str):
         logger.info(f"Uploading segment as a document to {chat_id}...")
@@ -216,111 +319,63 @@ class TelegramSender:
             "caption": caption,
             "document": f"file://{file_path}",
         }
-        response = requests.post(
+        payload = self._request_json(
             f"{self.base_url}/sendDocument",
             data=data,
             timeout=1800,
         )
-        response.raise_for_status()
-        payload: TelegramResponse = response.json()
-        return payload["result"]
+        try:
+            return payload["result"]
+        except (KeyError, TypeError) as exc:
+            raise AmbiguousUploadError("unexpected sendDocument response") from exc
 
     def upload(self, file_path: str, caption: str) -> TelegramMessage | None:
         chat_id = Config.TELEGRAM_CHANNEL_ID
-        delay = 10
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                if Config.TELEGRAM_UPLOAD_MODE == "video":
-                    try:
-                        return self._upload_video(file_path, caption)
-                    except requests.exceptions.ReadTimeout:
-                        raise
-                    except Exception:
-                        logger.exception("Video upload failed, fallback to document")
-                        return self._upload_document(file_path, caption, chat_id)
-                else:
+        try:
+            if Config.TELEGRAM_UPLOAD_MODE == "video":
+                try:
+                    return self._upload_video(file_path, caption)
+                except PermanentUploadError:
+                    logger.warning(
+                        "Video upload rejected, falling back to document",
+                        exc_info=True,
+                    )
                     return self._upload_document(file_path, caption, chat_id)
-            except requests.exceptions.ReadTimeout:
-                logger.warning(
-                    f"Telegram upload timed out (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-            except (
-                requests.exceptions.ConnectionError,
-                requests.exceptions.RequestException,
-            ) as e:
-                logger.error(
-                    f"Upload connection error "
-                    f"(attempt {attempt + 1}/{max_retries}): {e}"
-                )
-                # Don't retry on connection errors to avoid duplicates
-                break
-            except Exception:
-                logger.exception(
-                    f"Upload failed (attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-        return None
+            return self._upload_document(file_path, caption, chat_id)
+        except UploadError as exc:
+            logger.error("Upload failed: %s", exc)
+            return None
+        except Exception:
+            logger.exception("Upload failed")
+            return None
 
     def upload_document_to_chat(
         self, file_path: str, caption: str, chat_id: str
     ) -> TelegramMessage | None:
-        delay = 10
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                return self._upload_document(file_path, caption, chat_id)
-            except requests.exceptions.ReadTimeout:
-                logger.warning(
-                    f"Second channel upload timed out "
-                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-            except (
-                requests.exceptions.ConnectionError,
-                requests.exceptions.RequestException,
-            ) as e:
-                logger.error(
-                    f"Second channel upload connection error "
-                    f"(attempt {attempt + 1}/{max_retries}): {e}"
-                )
-                break
-            except Exception:
-                logger.exception(
-                    f"Second channel upload failed "
-                    f"(attempt {attempt + 1}/{max_retries}, retry in {delay}s)"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, 600)
-        return None
+        try:
+            return self._upload_document(file_path, caption, chat_id)
+        except UploadError as exc:
+            logger.error("Second channel upload failed: %s", exc)
+            return None
+        except Exception:
+            logger.exception("Second channel upload failed")
+            return None
 
     def upload_media_group(
         self,
         files: list[tuple[str, str]],
         chat_id: str,
         file_type: str,
-    ) -> list[TelegramMessage] | None:
+    ) -> list[TelegramMessage]:
         if not 1 <= len(files) <= 10:
             raise ValueError("Upload batches must contain 1 to 10 files")
         if len(files) == 1:
             file_path, caption = files[0]
-            try:
-                if file_type == "video":
-                    message = self._upload_video(file_path, caption, chat_id)
-                else:
-                    message = self._upload_document(file_path, caption, chat_id)
-                return [message]
-            except Exception as exc:
-                logger.error(
-                    "Single-file batch upload failed (%s); not retrying because "
-                    "delivery may have succeeded",
-                    type(exc).__name__,
-                )
-                return None
+            if file_type == "video":
+                message = self._upload_video(file_path, caption, chat_id)
+            else:
+                message = self._upload_document(file_path, caption, chat_id)
+            return [message]
 
         media: list[dict[str, str | bool | int]] = []
         upload_files: dict[str, tuple[str, bytes, str]] = {}
@@ -362,20 +417,11 @@ class TelegramSender:
             "media": json.dumps(media),
         }
         try:
-            response = requests.post(
+            payload = self._request_json(
                 f"{self.base_url}/sendMediaGroup",
                 data=data,
-                timeout=(30, 1800),
                 files=upload_files,
-            )
-            response.raise_for_status()
-            return response.json()["result"]
-        except Exception as exc:
-            # A lost response does not mean Telegram rejected the album.
-            logger.error(
-                "Media group upload failed (%s); not retrying because delivery "
-                "may have succeeded",
-                type(exc).__name__,
+                timeout=(30, 1800),
             )
         finally:
             for p in thumb_paths:
@@ -383,7 +429,11 @@ class TelegramSender:
                     os.remove(p)
                 except OSError:
                     pass
-        return None
+
+        try:
+            return payload["result"]
+        except (KeyError, TypeError) as exc:
+            raise AmbiguousUploadError("unexpected sendMediaGroup response") from exc
 
     @staticmethod
     def get_message_id(result: TelegramMessage) -> int | None:

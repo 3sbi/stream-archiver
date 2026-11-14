@@ -30,7 +30,10 @@ with (
     from app.config import Config
     from app.database import Database, db
     from app.recorder import Recorder
-    from app.telegram_sender import TelegramSender
+    from app.telegram_sender import (
+        AmbiguousUploadError,
+        TelegramSender,
+    )
     from app.uploader import UploadWorker
 
 unittest.addModuleCleanup(db.conn.close)
@@ -85,18 +88,18 @@ class GroupUploadTests(unittest.TestCase):
     def test_timeout_does_not_resend_album(self):
         self.post.side_effect = [requests.ReadTimeout(), self.response]
 
-        result = self.sender.upload_media_group(self.files, "test-channel", "video")
+        with self.assertRaises(AmbiguousUploadError):
+            self.sender.upload_media_group(self.files, "test-channel", "video")
 
-        self.assertIsNone(result)
         self.post.assert_called_once()
         self.sleep.assert_not_called()
 
     def test_unreadable_success_response_does_not_resend_album(self):
         self.response.json.side_effect = ValueError("response lost")
 
-        result = self.sender.upload_media_group(self.files, "test-channel", "video")
+        with self.assertRaises(AmbiguousUploadError):
+            self.sender.upload_media_group(self.files, "test-channel", "video")
 
-        self.assertIsNone(result)
         self.post.assert_called_once()
         self.sleep.assert_not_called()
 
@@ -176,6 +179,32 @@ class GroupUploadTests(unittest.TestCase):
         self.assertEqual(upgraded.get_uploaded_files(), {"old.mp4"})
         self.assertTrue(upgraded.claim_group_upload(["new.mp4"]))
 
+    def test_old_group_attempts_table_gains_rejected_column(self):
+        legacy_path = self.root / "legacy.db"
+        connection = sqlite3.connect(legacy_path)
+        connection.execute("""
+            CREATE TABLE group_upload_attempts (
+                filename TEXT PRIMARY KEY,
+                attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        connection.execute(
+            "INSERT INTO group_upload_attempts (filename) VALUES ('old.mp4')"
+        )
+        connection.commit()
+        connection.close()
+
+        with patch.object(Config, "DB_PATH", str(legacy_path)):
+            migrated = Database()
+        self.addCleanup(migrated.conn.close)
+
+        self.assertEqual(migrated.get_group_upload_attempts(), {"old.mp4"})
+        self.assertFalse(migrated.get_rejected_group_uploads())
+
+        migrated.reject_group_upload(["old.mp4"])
+
+        self.assertEqual(migrated.get_rejected_group_uploads(), {"old.mp4"})
+
     def test_database_failure_after_send_cannot_cause_resend(self):
         with patch.object(
             self.db, "mark_uploaded", side_effect=sqlite3.OperationalError("disk full")
@@ -207,7 +236,7 @@ class GroupUploadTests(unittest.TestCase):
         self.assertEqual(self.worker.upload_group([(path, caption)]), {path})
 
         self.post.assert_called_once()
-        self.assertTrue(self.post.call_args.kwargs["url"].endswith("/sendVideo"))
+        self.assertTrue(self.post.call_args.args[0].endswith("/sendVideo"))
         self.assertEqual(self.post.call_args.kwargs["data"]["caption"], caption)
         self.assertTrue(self.db.is_uploaded(Path(path).name))
         self.assertFalse(Path(path).exists())
@@ -247,6 +276,114 @@ class GroupUploadTests(unittest.TestCase):
         self.assertEqual(
             self.post.call_args.kwargs["data"]["video"], f"file://{self.files[1][0]}"
         )
+
+    def _http_error(self, status: int, description: str) -> requests.HTTPError:
+        response = Mock()
+        response.status_code = status
+        response.json.return_value = {
+            "ok": False,
+            "description": description,
+        }
+        return requests.HTTPError(description, response=response)
+
+    def test_permanent_rejection_is_marked_for_retry_on_next_start(self):
+        self.post.side_effect = self._http_error(400, "Bad Request: file is too big")
+
+        self.assertFalse(self.worker.upload_group(self.files))
+
+        filenames = {Path(path).name for path, _ in self.files}
+        self.assertEqual(self.db.get_rejected_group_uploads(), filenames)
+        self.assertTrue(all(Path(path).exists() for path, _ in self.files))
+        self.post.assert_called_once()
+
+        # The live session does not resend a rejected album.
+        self.assertFalse(self.worker.upload_group(self.files))
+        self.post.assert_called_once()
+
+        # Startup recovery releases the rejected claim and retries.
+        self.db.release_group_upload(list(self.db.get_rejected_group_uploads()))
+        self.post.side_effect = None
+
+        self.assertEqual(
+            self.worker.upload_group(self.files),
+            {path for path, _ in self.files},
+        )
+        self.assertEqual(self.post.call_count, 2)
+
+    def test_rate_limit_is_retried_then_marked_for_retry_on_next_start(self):
+        response = Mock()
+        response.status_code = 429
+        response.json.return_value = {
+            "ok": False,
+            "description": "Too Many Requests: retry after 1",
+            "parameters": {"retry_after": 1},
+        }
+        response.raise_for_status.side_effect = requests.HTTPError(
+            "rate limited", response=response
+        )
+        self.post.return_value = response
+
+        self.assertFalse(self.worker.upload_group(self.files))
+
+        self.assertEqual(self.post.call_count, 5)
+        self.assertEqual(
+            self.db.get_rejected_group_uploads(),
+            {Path(path).name for path, _ in self.files},
+        )
+        self.assertTrue(all(Path(path).exists() for path, _ in self.files))
+
+    def test_ambiguous_failure_keeps_claim_and_local_files(self):
+        self.post.side_effect = requests.ReadTimeout()
+
+        self.assertFalse(self.worker.upload_group(self.files))
+
+        self.assertEqual(
+            self.db.get_group_upload_attempts(),
+            {Path(path).name for path, _ in self.files},
+        )
+        self.assertFalse(self.db.get_rejected_group_uploads())
+        self.assertTrue(all(Path(path).exists() for path, _ in self.files))
+
+    def test_recovery_reuploads_unclaimed_and_rejected_segments(self):
+        for path, _ in self.files:
+            Path(path).unlink()
+        pending_path = self.root / "sessionA_1.mp4"
+        pending_path.write_bytes(b"video")
+        ambiguous_path = self.root / "sessionA_2.mp4"
+        ambiguous_path.write_bytes(b"video")
+        rejected_path = self.root / "sessionA_3.mp4"
+        rejected_path.write_bytes(b"video")
+        uploaded_path = self.root / "sessionB_1.mp4"
+        uploaded_path.write_bytes(b"video")
+        self.db.claim_group_upload([ambiguous_path.name])
+        self.db.claim_group_upload([rejected_path.name])
+        self.db.reject_group_upload([rejected_path.name])
+        self.db.mark_uploaded(uploaded_path.name, 1)
+
+        with patch.object(Config, "GROUP_SEGMENTS", True):
+            with patch.object(self.worker, "upload_group", return_value=set()) as up:
+                self.recorder.recover_pending_segments()
+
+        up.assert_called_once_with(
+            [
+                (str(pending_path), "sessionA"),
+                (str(rejected_path), "sessionA"),
+            ]
+        )
+        self.assertFalse(self.db.get_rejected_group_uploads())
+        self.assertEqual(self.db.get_group_upload_attempts(), {ambiguous_path.name})
+
+    def test_recovery_enqueues_individual_files_when_groups_disabled(self):
+        for path, _ in self.files:
+            Path(path).unlink()
+        pending_path = self.root / "sessionA_1.mp4"
+        pending_path.write_bytes(b"video")
+
+        with patch.object(Config, "GROUP_SEGMENTS", False):
+            with patch.object(self.worker, "enqueue") as enqueue:
+                self.recorder.recover_pending_segments()
+
+        enqueue.assert_called_once_with(str(pending_path), "sessionA")
 
     def test_single_video_timeout_is_not_retried_or_sent_as_document(self):
         self.post.side_effect = [requests.ReadTimeout(), self.response]

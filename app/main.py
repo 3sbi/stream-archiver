@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import threading
 import time
 import traceback
 
@@ -103,6 +104,13 @@ def get_stream_info(platform: str):
     return twitch.get_stream_info()
 
 
+def recover_pending_segments() -> None:
+    try:
+        recorder.recover_pending_segments()
+    except Exception:
+        logger.exception("STARTUP RECOVERY ERROR")
+
+
 def main():
     platform, channel_name, url = get_platform()
     emoji = PLATFORMS[platform]["emoji"]
@@ -118,6 +126,7 @@ def main():
         f"watermark={Config.TELEGRAM_WATERMARK_TEXT}"
     )
     uploader.start()
+    threading.Thread(target=recover_pending_segments, daemon=True).start()
     stream_was_live: bool = False
     in_grace_period: bool = False
     grace_period_start: float = 0

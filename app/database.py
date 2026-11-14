@@ -41,14 +41,22 @@ class Database:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS group_upload_attempts (
             filename TEXT PRIMARY KEY,
-            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            rejected INTEGER NOT NULL DEFAULT 0
         )
         """)
+        cur.execute("PRAGMA table_info(group_upload_attempts)")
+        columns = {row[1] for row in cur.fetchall()}
+        if "rejected" not in columns:
+            cur.execute(
+                "ALTER TABLE group_upload_attempts "
+                "ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0"
+            )
         self.conn.commit()
 
     def claim_group_upload(self, filenames: list[str]) -> bool:
         # A separate transaction makes the claim atomic across workers and restarts.
-        # shortcut: failed attempts need manual verification, add recovery before retries.
+        # A rejected claim (definitely not delivered) is retried by startup recovery.
         with closing(sqlite3.connect(self.path)) as conn:
             try:
                 with conn:
@@ -59,6 +67,51 @@ class Database:
             except sqlite3.IntegrityError:
                 return False
         return True
+
+    def reject_group_upload(self, filenames: list[str]) -> None:
+        """Mark a confirmed, non-delivered failure for retry on the next start."""
+        if not filenames:
+            return
+        with closing(sqlite3.connect(self.path)) as conn:
+            with conn:
+                conn.executemany(
+                    "UPDATE group_upload_attempts SET rejected = 1 WHERE filename = ?",
+                    [(filename,) for filename in filenames],
+                )
+
+    def release_group_upload(self, filenames: list[str]) -> None:
+        """Remove claims so the files can be claimed and attempted again."""
+        if not filenames:
+            return
+        with closing(sqlite3.connect(self.path)) as conn:
+            with conn:
+                conn.executemany(
+                    "DELETE FROM group_upload_attempts WHERE filename = ?",
+                    [(filename,) for filename in filenames],
+                )
+
+    def get_group_upload_attempts(self) -> set[str]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT filename FROM group_upload_attempts")
+        return {row[0] for row in cur.fetchall()}
+
+    def get_rejected_group_uploads(self) -> set[str]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT filename FROM group_upload_attempts WHERE rejected = 1")
+        return {row[0] for row in cur.fetchall()}
+
+    def get_stream(self, session_id: str) -> tuple[str, str] | None:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+        SELECT title, started_at
+        FROM streams
+        WHERE session_id=?
+        """,
+            (session_id,),
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else None
 
     def create_stream(self, session_id: str, title: str, started_at: str):
         cur = self.conn.cursor()

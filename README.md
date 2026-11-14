@@ -52,15 +52,25 @@ Recording sessions do not overlap. If the previous watcher is still finalizing
 uploads, the main loop retries starting the next recording on later polls.
 
 Main-channel batches are recorded in SQLite's `group_upload_attempts` table before
-sending. Each file is attempted once, including across restarts. A timeout or lost
-response may mean Telegram accepted the album, so failed attempts keep their local
-files and are not automatically retried. This also applies to confirmed failures.
+sending, so an album is not sent twice after a restart. Failures are classified:
 
-Verify the affected album in the main channel before retrying. If it is absent,
+- **Rejected** (`4xx`, except `429`) — Telegram definitely did not accept the
+  album (for example `file is too big`). The attempt is marked as rejected so the
+  live session stops retrying, and startup recovery retries the files.
+- **Rate-limited** (`429`) — retried with backoff. If retries are exhausted, the
+  attempt is marked as rejected and retried on the next start.
+- **Ambiguous** (timeout, connection error, `5xx`, unreadable response) — Telegram
+  may have accepted the album. The local files are kept and automatic retries stay
+  blocked to avoid duplicate albums.
+
+Unclaimed segment files left on disk, and files whose attempt was marked as
+rejected, are re-uploaded on the next start (as media groups when
+`GROUP_SEGMENTS=true`, otherwise through the normal upload queue).
+
+Verify an ambiguous album in the main channel before retrying. If it is absent,
 stop that recorder instance and remove only the affected filenames from
 `group_upload_attempts` in its database. Retain the files and the
-`uploaded_segments` records. There is currently no startup recovery of old sessions,
-so clearing an attempt alone does not schedule a retry after restarting.
+`uploaded_segments` records, then restart the instance.
 
 ### Tests
 

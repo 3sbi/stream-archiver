@@ -6,7 +6,12 @@ from collections.abc import Callable
 
 from .config import Config
 from .database import db
-from .telegram_sender import telegram
+from .telegram_sender import (
+    AmbiguousUploadError,
+    PermanentUploadError,
+    RateLimitUploadError,
+    telegram,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,7 @@ class UploadWorker:
         if not files:
             return uploaded_set
 
+        filenames: list[str] = []
         try:
             uploaded_set = {
                 path for path, _ in files if db.is_uploaded(os.path.basename(path))
@@ -65,48 +71,74 @@ class UploadWorker:
             ]
             if not files:
                 return uploaded_set
-            if not db.claim_group_upload([os.path.basename(path) for path, _ in files]):
+            filenames = [os.path.basename(path) for path, _ in files]
+            if not db.claim_group_upload(filenames):
                 logger.warning(
                     "Group upload already attempted; verify delivery before retrying. "
                     "Keeping local files: %s",
-                    [os.path.basename(path) for path, _ in files],
+                    filenames,
                 )
                 return uploaded_set
 
             file_type = (
                 "video" if Config.TELEGRAM_UPLOAD_MODE == "video" else "document"
             )
-            result = telegram.upload_media_group(
-                files=files,
-                chat_id=Config.TELEGRAM_CHANNEL_ID,
-                file_type=file_type,
-            )
+            try:
+                result = telegram.upload_media_group(
+                    files=files,
+                    chat_id=Config.TELEGRAM_CHANNEL_ID,
+                    file_type=file_type,
+                )
+            except PermanentUploadError as exc:
+                logger.error(
+                    "Telegram rejected the media group (%s); marking the attempt "
+                    "for retry on the next start",
+                    exc,
+                )
+                db.reject_group_upload(filenames)
+                return uploaded_set
+            except RateLimitUploadError as exc:
+                logger.warning(
+                    "Media group rate-limited (%s); marking the attempt for retry "
+                    "on the next start",
+                    exc,
+                )
+                db.reject_group_upload(filenames)
+                return uploaded_set
+            except AmbiguousUploadError as exc:
+                logger.error(
+                    "Media group delivery unconfirmed (%s); keeping local files and "
+                    "blocking automatic retries until delivery is verified",
+                    exc,
+                )
+                return uploaded_set
+
             if not result:
                 logger.warning(
-                    "Group delivery unconfirmed; keeping local files and blocking "
-                    "automatic retries until delivery is verified"
+                    "Group upload returned no messages; keeping local files and "
+                    "blocking automatic retries until delivery is verified"
                 )
-            if result:
-                first_id = telegram.get_message_id(result[0])
-                if self._first_message_id is None and first_id is not None:
-                    self._first_message_id = first_id
+                return uploaded_set
 
-                for i, (file_path, _) in enumerate(files):
-                    filename = os.path.basename(file_path)
-                    msg_id = (
-                        telegram.get_message_id(result[i]) if i < len(result) else None
-                    )
-                    db.mark_uploaded(filename, msg_id)
-                    uploaded_set.add(file_path)
+            first_id = telegram.get_message_id(result[0])
+            if self._first_message_id is None and first_id is not None:
+                self._first_message_id = first_id
 
-                self._send_to_second_channel(files)
+            for i, (file_path, _) in enumerate(files):
+                filename = os.path.basename(file_path)
+                msg_id = telegram.get_message_id(result[i]) if i < len(result) else None
+                db.mark_uploaded(filename, msg_id)
+                uploaded_set.add(file_path)
 
-                for file_path, _ in files:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
+            self._send_to_second_channel(files)
+
+            for file_path, _ in files:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
         except Exception:
             logger.exception("Upload group error")
-            # Don't delete files on error to avoid re-uploading duplicates if they were actually sent
+            # Keep the claim and local files: the album may already be in the
+            # channel, so resending blindly could create duplicates.
             pass
 
         return uploaded_set

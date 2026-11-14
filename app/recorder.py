@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 MAX_GROUP_UPLOAD_SIZE = 10
 # Re-enqueue if upload hasn't completed within this many multiples of SEGMENT_TIME
 STALE_UPLOAD_MULTIPLIER = 3
+# Segment files are named "<session>_<number>.mp4"
+SEGMENT_FILENAME_RE = re.compile(r"^(?P<session>.+)_(?P<number>\d+)\.mp4$")
 
 
 class Recorder:
@@ -397,6 +399,57 @@ class Recorder:
         uploaded.update(uploaded_paths)
         return uploaded_paths
 
+    def recover_pending_segments(self) -> None:
+        """Re-upload leftover segments that were never sent.
+
+        Files with an unresolved group-upload claim are skipped: an earlier
+        attempt may have been delivered, so they require manual verification.
+        Claims marked as rejected were confirmed as not delivered and are retried.
+        """
+        uploaded = db.get_uploaded_files()
+        claimed = db.get_group_upload_attempts()
+        rejected = db.get_rejected_group_uploads()
+        pending: list[tuple[str, str]] = []
+        retry_filenames: list[str] = []
+        for file in sorted(Path(Config.SEGMENTS_DIR).glob("*.mp4")):
+            if file.name in uploaded:
+                continue
+            if file.name in claimed and file.name not in rejected:
+                continue
+            pending.append((str(file), self._caption_for_segment(file.name)))
+            if file.name in rejected:
+                retry_filenames.append(file.name)
+
+        if not pending:
+            return
+
+        if retry_filenames:
+            db.release_group_upload(retry_filenames)
+
+        logger.info(
+            "recover_pending_segments: re-uploading %d leftover segment(s)",
+            len(pending),
+        )
+        if Config.GROUP_SEGMENTS:
+            for start in range(0, len(pending), MAX_GROUP_UPLOAD_SIZE):
+                uploader.upload_group(pending[start : start + MAX_GROUP_UPLOAD_SIZE])
+        else:
+            for file_path, caption in pending:
+                uploader.enqueue(file_path, caption)
+
+    def _caption_for_segment(self, filename: str) -> str:
+        match = SEGMENT_FILENAME_RE.fullmatch(filename)
+        session = match.group("session") if match else Path(filename).stem
+        stream = db.get_stream(session)
+        if not stream:
+            return session[:1024]
+        title, started_at = stream
+        try:
+            return self._format_caption(title, started_at)
+        except (TypeError, ValueError):
+            logger.warning("Invalid started_at for session %s", session)
+            return session[:1024]
+
     def upload_remaining(
         self,
         uploaded: set[str],
@@ -425,12 +478,13 @@ class Recorder:
             caption = self.build_caption()
             uploader.enqueue(str(file), caption)
 
-    def build_caption(self) -> str:
-        date = datetime.fromisoformat(self.started_at).astimezone(
-            ZoneInfo(Config.TIMEZONE)
-        )
-        caption = f"{self.current_title}\n{date.strftime('%d.%m.%Y')}"
+    def _format_caption(self, title: str | None, started_at: str) -> str:
+        date = datetime.fromisoformat(started_at).astimezone(ZoneInfo(Config.TIMEZONE))
+        caption = f"{title}\n{date.strftime('%d.%m.%Y')}"
         return caption[:1024]
+
+    def build_caption(self) -> str:
+        return self._format_caption(self.current_title, self.started_at)
 
 
 recorder = Recorder()
