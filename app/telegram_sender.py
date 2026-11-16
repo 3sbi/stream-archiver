@@ -377,6 +377,12 @@ class TelegramSender:
                 "may have succeeded",
                 type(exc).__name__,
             )
+            if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                logger.error(
+                    "Media group HTTP response: status=%s, body=%s",
+                    exc.response.status_code,
+                    exc.response.text.replace(Config.TELEGRAM_BOT_TOKEN, "<redacted>"),
+                )
         finally:
             for p in thumb_paths:
                 try:

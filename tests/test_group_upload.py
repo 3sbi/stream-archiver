@@ -100,6 +100,31 @@ class GroupUploadTests(unittest.TestCase):
         self.post.assert_called_once()
         self.sleep.assert_not_called()
 
+    def test_http_error_logs_server_response_without_token_and_keeps_files(self):
+        response = requests.Response()
+        response.status_code = 400
+        response.url = f"{self.sender.base_url}/sendMediaGroup"
+        response._content = json.dumps(
+            {
+                "ok": False,
+                "description": f"Bad Request: cannot read file ({Config.TELEGRAM_BOT_TOKEN})",
+            }
+        ).encode()
+        self.post.return_value = response
+
+        with self.assertLogs("app.telegram_sender", level="ERROR") as logs:
+            self.assertFalse(self.worker.upload_group(self.files))
+        self.assertFalse(self.worker.upload_group(self.files))
+
+        output = "\n".join(logs.output)
+        self.assertIn("status=400", output)
+        self.assertIn("Bad Request: cannot read file", output)
+        self.assertNotIn(Config.TELEGRAM_BOT_TOKEN, output)
+        self.post.assert_called_once()
+        self.sleep.assert_not_called()
+        self.assertTrue(all(Path(path).exists() for path, _ in self.files))
+        self.assertFalse(self.db.get_uploaded_files())
+
     def test_failed_flush_stops_without_progress(self):
         self.recorder._upload_group_batch = Mock(
             side_effect=[set(), AssertionError("batch retried")]

@@ -55,6 +55,8 @@ Main-channel batches are recorded in SQLite's `group_upload_attempts` table befo
 sending. Each file is attempted once, including across restarts. A timeout or lost
 response may mean Telegram accepted the album, so failed attempts keep their local
 files and are not automatically retried. This also applies to confirmed failures.
+For HTTP errors during album uploads, the logs include the response status and
+body from the API server; check these for the reason the request failed.
 
 Verify the affected album in the main channel before retrying. If it is absent,
 stop that recorder instance and remove only the affected filenames from
