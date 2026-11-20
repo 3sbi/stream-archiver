@@ -127,7 +127,22 @@ def main():
         try:
             log_memory()
 
+            if recorder.running:
+                try:
+                    recorder.check_disk_space()
+                except RuntimeError:
+                    recorder.stop_recording()
+                    stream_was_live = False
+                    in_grace_period = False
+                    recorder.in_grace_period = False
+
             live = check_stream_via_streamlink(url)
+
+            if stream_was_live and not recorder.running:
+                recorder.stop_recording()
+                stream_was_live = False
+                in_grace_period = False
+                recorder.in_grace_period = False
 
             if not live and not stream_was_live:
                 logger.debug("No stream found for %s", Config.channel())

@@ -51,18 +51,34 @@ docker compose up -d
 Recording sessions do not overlap. If the previous watcher is still finalizing
 uploads, the main loop retries starting the next recording on later polls.
 
+Recording stops when free space reaches `MIN_FREE_DISK_GB`, before flushing collected
+segments. The main loop also checks disk space while an upload is running. Recording
+can start again after space is available and the previous watcher has finished.
+
+Completed files larger than 2,000,000,000 bytes trigger an early flush and are
+split with FFmpeg without re-encoding.
+Every part is checked against that limit before sending. Splitting needs temporary
+space for a copy of the source; if space is insufficient or splitting fails, the
+original is retained. The original is deleted only after every part is confirmed
+uploaded. Empty files are rejected.
+
 Main-channel batches are recorded in SQLite's `group_upload_attempts` table before
 sending. Each file is attempted once, including across restarts. A timeout or lost
 response may mean Telegram accepted the album, so failed attempts keep their local
 files and are not automatically retried. This also applies to confirmed failures.
 For HTTP errors during album uploads, the logs include the response status and
 body from the API server; check these for the reason the request failed.
+Blocked files are excluded from later batches, so they do not prevent newer files
+from uploading. They remain on disk until handled manually.
 
 Verify the affected album in the main channel before retrying. If it is absent,
 stop that recorder instance and remove only the affected filenames from
 `group_upload_attempts` in its database. Retain the files and the
 `uploaded_segments` records. There is currently no startup recovery of old sessions,
 so clearing an attempt alone does not schedule a retry after restarting.
+For a split file, verify its parts too: attempts use the original filename and
+`<original-stem>_partNNNN.mp4` filenames. Retain confirmed part records to avoid
+resending them during a manual retry.
 
 ### Tests
 

@@ -15,6 +15,7 @@ from app.config import Config
 logger = logging.getLogger(__name__)
 
 MAX_THUMBNAIL_SIZE = 200 * 1024  # 200 KB
+MAX_UPLOAD_SIZE = 2_000_000_000
 
 
 class TelegramMessage(TypedDict):
@@ -173,11 +174,12 @@ class TelegramSender:
             return None
 
     def _upload_video(
-        self, file_path: str, caption: str, chat_id: str | None = None
+        self, file_path: str, caption: str, chat_id: str
     ) -> TelegramMessage:
+        self._validate_file_size(file_path)
         logger.info("Uploading segment as a video...")
         data: dict[str, object] = {
-            "chat_id": chat_id if chat_id is not None else Config.TELEGRAM_CHANNEL_ID,
+            "chat_id": chat_id,
             "caption": caption,
             "video": f"file://{file_path}",
             "supports_streaming": True,
@@ -210,6 +212,7 @@ class TelegramSender:
                     pass
 
     def _upload_document(self, file_path: str, caption: str, chat_id: str):
+        self._validate_file_size(file_path)
         logger.info(f"Uploading segment as a document to {chat_id}...")
         data: dict[str, object] = {
             "chat_id": chat_id,
@@ -233,7 +236,7 @@ class TelegramSender:
             try:
                 if Config.TELEGRAM_UPLOAD_MODE == "video":
                     try:
-                        return self._upload_video(file_path, caption)
+                        return self._upload_video(file_path, caption, chat_id)
                     except requests.exceptions.ReadTimeout:
                         raise
                     except Exception:
@@ -306,6 +309,8 @@ class TelegramSender:
     ) -> list[TelegramMessage] | None:
         if not 1 <= len(files) <= 10:
             raise ValueError("Upload batches must contain 1 to 10 files")
+        for file_path, _ in files:
+            self._validate_file_size(file_path)
         if len(files) == 1:
             file_path, caption = files[0]
             try:
@@ -390,6 +395,12 @@ class TelegramSender:
                 except OSError:
                     pass
         return None
+
+    @staticmethod
+    def _validate_file_size(file_path: str) -> None:
+        size = os.path.getsize(file_path)
+        if not 0 < size <= MAX_UPLOAD_SIZE:
+            raise ValueError(f"Invalid upload size for {file_path}: {size} bytes")
 
     @staticmethod
     def get_message_id(result: TelegramMessage) -> int | None:

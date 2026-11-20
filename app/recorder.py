@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Config
 from app.database import db
+from app.telegram_sender import MAX_UPLOAD_SIZE
 from app.uploader import uploader
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class Recorder:
         self.streamlink: subprocess.Popen[bytes] | None = None
         self.ffmpeg: subprocess.Popen[bytes] | None = None
         self._watcher_thread: threading.Thread | None = None
+        self._pipeline_lock = threading.Lock()
 
     def free_space_gb(self) -> float:
         usage = shutil.disk_usage(Config.SEGMENTS_DIR)
@@ -95,28 +97,6 @@ class Recorder:
         cmd.append(segment_pattern)
         return cmd
 
-    def _stop_process(
-        self,
-        proc: subprocess.Popen[bytes] | None,
-        name: str,
-        timeout: int = 30,
-        terminate: bool = True,
-    ) -> None:
-        if proc is None or proc.poll() is not None:
-            return
-        if terminate:
-            proc.terminate()
-        try:
-            proc.wait(timeout=timeout)
-            logger.info("%s exited (rc=%d)", name, proc.returncode)
-        except subprocess.TimeoutExpired:
-            if terminate:
-                logger.warning("%s did not exit within %ds, killing", name, timeout)
-                proc.kill()
-                proc.wait()
-            else:
-                logger.warning("%s did not exit within %ds timeout", name, timeout)
-
     def _launch_processes(
         self,
         url: str,
@@ -128,11 +108,10 @@ class Recorder:
         self.streamlink = subprocess.Popen(
             streamlink_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
         )
         assert self.streamlink.stdout is not None
         self.ffmpeg = subprocess.Popen(
-            ffmpeg_cmd, stdin=self.streamlink.stdout, stderr=subprocess.PIPE
+            ffmpeg_cmd, stdin=self.streamlink.stdout
         )
         # Important: the parent must not keep an extra copy of the pipe open.
         self.streamlink.stdout.close()
@@ -141,7 +120,9 @@ class Recorder:
     def start_recording(self, url: str, title: str, started_at: str, channel_name: str):
         # shortcut: starts wait for final uploads, isolate session state to allow overlap.
         if self._watcher_thread is not None and self._watcher_thread.is_alive():
-            raise RuntimeError("Previous recording watcher is still running; retry later")
+            raise RuntimeError(
+                "Previous recording watcher is still running; retry later"
+            )
         self.check_disk_space()
         uploader.reset_thread_anchor()
         self.current_title = title
@@ -177,8 +158,7 @@ class Recorder:
 
     def stop_recording(self) -> None:
         self.running = False
-        self._stop_process(self.streamlink, "streamlink")
-        self._stop_process(self.ffmpeg, "ffmpeg")
+        self._stop_pipeline()
         if self.current_session:
             ended_at = datetime.now(UTC).isoformat()
             db.finish_stream(self.current_session, ended_at)
@@ -191,36 +171,37 @@ class Recorder:
         logger.info("Recording stopped")
 
     def _stop_pipeline(self, timeout: int = 30) -> None:
-        streamlink = self.streamlink
-        ffmpeg = self.ffmpeg
-        # Stop producer first
-        if streamlink and streamlink.poll() is None:
-            streamlink.terminate()
-            try:
-                streamlink.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                logger.warning("Streamlink did not stop, killing")
-                streamlink.kill()
-                streamlink.wait()
-        # Streamlink is gone, so FFmpeg should receive EOF and finalize the MP4.
-        if ffmpeg and ffmpeg.poll() is None:
-            try:
-                ffmpeg.wait(timeout=timeout)
-                logger.info("FFmpeg finalized cleanly (rc=%d)", ffmpeg.returncode)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "FFmpeg did not finalize within %ds, terminating",
-                    timeout,
-                )
-                ffmpeg.terminate()
+        with self._pipeline_lock:
+            streamlink = self.streamlink
+            ffmpeg = self.ffmpeg
+            # Stop producer first
+            if streamlink and streamlink.poll() is None:
+                streamlink.terminate()
                 try:
-                    ffmpeg.wait(timeout=10)
+                    streamlink.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    logger.warning("FFmpeg did not stop, killing")
-                    ffmpeg.kill()
-                    ffmpeg.wait()
-        self.streamlink = None
-        self.ffmpeg = None
+                    logger.warning("Streamlink did not stop, killing")
+                    streamlink.kill()
+                    streamlink.wait()
+            # Streamlink is gone, so FFmpeg should receive EOF and finalize the MP4.
+            if ffmpeg and ffmpeg.poll() is None:
+                try:
+                    ffmpeg.wait(timeout=timeout)
+                    logger.info("FFmpeg finalized cleanly (rc=%d)", ffmpeg.returncode)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "FFmpeg did not finalize within %ds, terminating",
+                        timeout,
+                    )
+                    ffmpeg.terminate()
+                    try:
+                        ffmpeg.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("FFmpeg did not stop, killing")
+                        ffmpeg.kill()
+                        ffmpeg.wait()
+            self.streamlink = None
+            self.ffmpeg = None
 
     def restart_recording(self, url: str, title: str):
         self._stop_pipeline()
@@ -295,7 +276,7 @@ class Recorder:
                     with lock:
                         pending[str(file)] = now
                 time.sleep(10)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 logger.error("_individual_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
@@ -309,7 +290,7 @@ class Recorder:
                 self._collect_new_segments_for_group(session, uploaded, group)
                 self._flush_group_if_needed(group, uploaded)
                 time.sleep(10)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 logger.error("_group_watcher error")
                 traceback.print_exc()
                 time.sleep(10)
@@ -340,16 +321,33 @@ class Recorder:
         try:
             self.check_disk_space()
         except RuntimeError:
-            logger.warning("Low disk space, flushing collected segments")
+            logger.warning(
+                "Low disk space, stopping recording before flushing segments"
+            )
+            self.running = False
+            self._stop_pipeline()
             low_disk = True
 
-        while group and (low_disk or len(group) >= MAX_GROUP_UPLOAD_SIZE):
+        attempted = db.get_attempted_files()
+        group[:] = [(p, c) for p, c in group if Path(p).name not in attempted]
+        while group and (
+            low_disk
+            or len(group) >= MAX_GROUP_UPLOAD_SIZE
+            or any(Path(p).stat().st_size > MAX_UPLOAD_SIZE for p, _ in group)
+        ):
             batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
-            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
-            if not uploaded_paths:
+            attempted = db.get_attempted_files()
+            remaining = [
+                (p, c)
+                for p, c in group
+                if p not in uploaded_paths and Path(p).name not in attempted
+            ]
+            if remaining == group:
                 logger.warning("Group upload made no progress; stopping flush")
                 break
+            group[:] = remaining
+            low_disk = self.free_space_gb() < Config.MIN_FREE_DISK_GB
 
     def _finalize_stream(
         self, group: list[tuple[str, str]], uploaded: set[str], session: str
@@ -372,13 +370,21 @@ class Recorder:
             MAX_GROUP_UPLOAD_SIZE,
         )
 
+        attempted = db.get_attempted_files()
+        group[:] = [(p, c) for p, c in group if Path(p).name not in attempted]
         while group:
             batch = group[:MAX_GROUP_UPLOAD_SIZE]
             uploaded_paths = self._upload_group_batch(batch, uploaded)
-            group[:] = [(p, c) for p, c in group if p not in uploaded_paths]
-            if not uploaded_paths:
+            attempted = db.get_attempted_files()
+            remaining = [
+                (p, c)
+                for p, c in group
+                if p not in uploaded_paths and Path(p).name not in attempted
+            ]
+            if remaining == group:
                 logger.warning("Group upload made no progress; keeping local files")
                 break
+            group[:] = remaining
 
     def _upload_group_batch(
         self, batch: list[tuple[str, str]], uploaded: set[str]

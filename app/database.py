@@ -19,6 +19,12 @@ class Database:
         """)
         return {row[0] for row in cur.fetchall()}
 
+    def get_attempted_files(self) -> set[str]:
+        return {
+            row[0]
+            for row in self.conn.execute("SELECT filename FROM group_upload_attempts")
+        }
+
     def create_tables(self):
         cur = self.conn.cursor()
         cur.execute("""

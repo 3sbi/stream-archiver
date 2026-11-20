@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import subprocess
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -82,6 +83,32 @@ class GroupUploadTests(unittest.TestCase):
         self.sleep = sleep.start()
         self.addCleanup(sleep.stop)
 
+    def test_recording_processes_inherit_stderr(self):
+        producer = Mock()
+        consumer = Mock()
+        with patch("app.recorder.subprocess.Popen", side_effect=[producer, consumer]) as launch:
+            self.recorder._launch_processes("stream-url", "segment_%d.mp4")
+
+        self.assertEqual(launch.call_count, 2)
+        for call in launch.call_args_list:
+            self.assertIsNone(call.kwargs.get("stderr"))
+        self.assertEqual(launch.call_args_list[0].kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(launch.call_args_list[1].kwargs["stdin"], producer.stdout)
+        producer.stdout.close.assert_called_once()
+        self.assertTrue(self.recorder.running)
+
+    def test_individual_video_upload_uses_requested_channel_without_fallback(self):
+        path, caption = self.files[0]
+        message = {"message_id": 42}
+        self.response.json.return_value = {"result": message}
+
+        self.assertEqual(self.sender.upload(path, caption), message)
+
+        self.post.assert_called_once()
+        self.assertTrue(self.post.call_args.kwargs["url"].endswith("/sendVideo"))
+        self.assertEqual(self.post.call_args.kwargs["data"]["chat_id"], Config.TELEGRAM_CHANNEL_ID)
+        self.assertEqual(self.post.call_args.kwargs["data"]["video"], f"file://{path}")
+
     def test_timeout_does_not_resend_album(self):
         self.post.side_effect = [requests.ReadTimeout(), self.response]
 
@@ -149,7 +176,7 @@ class GroupUploadTests(unittest.TestCase):
 
         self.post.assert_called_once()
         self.assertFalse(uploaded)
-        self.assertEqual(group, self.files)
+        self.assertFalse(group)
         self.assertTrue(all(Path(path).exists() for path, _ in self.files))
         self.assertFalse(self.db.get_uploaded_files())
 
@@ -216,6 +243,9 @@ class GroupUploadTests(unittest.TestCase):
     def test_already_uploaded_files_are_filtered_from_batch(self):
         first_path = self.files[0][0]
         self.db.mark_uploaded(Path(first_path).name, 100)
+        self.response.json.return_value = {
+            "result": [{"message_id": i + 1} for i in range(9)]
+        }
 
         self.assertEqual(
             self.worker.upload_group(self.files), {path for path, _ in self.files}
@@ -306,6 +336,7 @@ class GroupUploadTests(unittest.TestCase):
 
         self.post.side_effect = accept_valid_batch
         self.recorder.check_disk_space.side_effect = RuntimeError("low disk")
+        self.recorder.free_space_gb = Mock(return_value=0)
         group = self.files.copy()
         uploaded = set()
 
@@ -317,6 +348,7 @@ class GroupUploadTests(unittest.TestCase):
         self.assertEqual(len(self.db.get_uploaded_files()), 21)
 
     def test_low_disk_flush_stops_on_failed_batch(self):
+        self.recorder.running = True
         self.recorder.check_disk_space.side_effect = RuntimeError("low disk")
         self.recorder._upload_group_batch = Mock(
             side_effect=[set(), AssertionError("batch retried")]
@@ -327,6 +359,8 @@ class GroupUploadTests(unittest.TestCase):
 
         self.recorder._upload_group_batch.assert_called_once()
         self.assertEqual(group, self.files)
+        self.assertFalse(self.recorder.running)
+        self.recorder._stop_pipeline.assert_called_once()
 
     def test_normal_disk_keeps_incomplete_batch(self):
         group = self.files[:1]
@@ -343,6 +377,274 @@ class GroupUploadTests(unittest.TestCase):
                     self.sender.upload_media_group(files, "test-channel", "video")
 
         self.post.assert_not_called()
+
+    def test_blocked_batch_does_not_hide_later_files_during_finalization(self):
+        self.db.claim_group_upload([Path(p).name for p, _ in self.files])
+        blocked = self.files.copy()
+        for i in range(10, 12):
+            path = self.root / f"session_{i}.mp4"
+            path.write_bytes(b"video")
+            self.files.append((str(path), "caption"))
+        self.response.json.return_value = {
+            "result": [{"message_id": 11}, {"message_id": 12}]
+        }
+        uploaded = set()
+        group = self.files.copy()
+
+        self.recorder._finalize_stream(group, uploaded, "session")
+
+        self.post.assert_called_once()
+        self.assertEqual(uploaded, {p for p, _ in self.files[10:]})
+        self.assertFalse(group)
+        self.assertTrue(all(Path(p).exists() for p, _ in blocked))
+
+    def test_failed_batch_does_not_block_next_batch_in_same_finalization(self):
+        for i in range(10, 12):
+            path = self.root / f"session_{i}.mp4"
+            path.write_bytes(b"video")
+            self.files.append((str(path), "caption"))
+        self.response.json.return_value = {
+            "result": [{"message_id": 11}, {"message_id": 12}]
+        }
+        self.post.side_effect = [requests.ReadTimeout(), self.response]
+        uploaded = set()
+
+        self.recorder._finalize_stream(self.files.copy(), uploaded, "session")
+
+        self.assertEqual(self.post.call_count, 2)
+        self.assertEqual(uploaded, {p for p, _ in self.files[10:]})
+        self.assertTrue(all(Path(p).exists() for p, _ in self.files[:10]))
+
+    def test_low_disk_stops_pipeline_even_without_completed_segments(self):
+        self.recorder.running = True
+        self.recorder.check_disk_space.side_effect = RuntimeError("low disk")
+
+        self.recorder._flush_group_if_needed([], set())
+
+        self.assertFalse(self.recorder.running)
+        self.recorder._stop_pipeline.assert_called_once()
+        self.post.assert_not_called()
+
+    def test_low_disk_is_checked_again_after_successful_batch(self):
+        self.recorder.check_disk_space.side_effect = RuntimeError("low disk")
+        self.recorder.free_space_gb = Mock(return_value=Config.MIN_FREE_DISK_GB + 1)
+        path = self.root / "session_10.mp4"
+        path.write_bytes(b"video")
+        group = self.files + [(str(path), "caption")]
+
+        self.recorder._flush_group_if_needed(group, set())
+
+        self.assertEqual(group, [(str(path), "caption")])
+        self.post.assert_called_once()
+
+    def test_oversized_and_empty_files_are_rejected_before_request(self):
+        for size in (0, 2_000_000_001):
+            with self.subTest(size=size), patch("os.path.getsize", return_value=size):
+                with self.assertRaises(ValueError):
+                    self.sender.upload_media_group(self.files, "test-channel", "video")
+        self.post.assert_not_called()
+
+    def test_oversized_source_survives_insufficient_split_space(self):
+        path = self.files[0][0]
+        with (
+            patch("app.uploader.MAX_UPLOAD_SIZE", 4),
+            patch("app.uploader.shutil.disk_usage", return_value=Mock(free=0)),
+        ):
+            self.assertFalse(self.worker.upload_group(self.files[:1]))
+        self.assertTrue(Path(path).exists())
+        self.assertFalse(self.db.get_attempted_files())
+        self.post.assert_not_called()
+
+    def test_real_ffmpeg_split_preserves_duration_and_checks_each_upload_size(self):
+        source = self.root / "session_big.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x120:rate=10",
+                "-t",
+                "6",
+                "-c:v",
+                "mpeg4",
+                "-q:v",
+                "2",
+                "-g",
+                "10",
+                str(source),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        limit = source.stat().st_size // 2
+        self.sender._get_video_duration.return_value = 6
+        durations = []
+
+        def accept_parts(*args, **kwargs):
+            self.assertTrue(source.exists())
+            data = kwargs["data"]
+            if "media" in data:
+                paths = [item["media"][7:] for item in json.loads(data["media"])]
+                result = [{"message_id": i + 1} for i in range(len(paths))]
+            else:
+                paths = [data["video"][7:]]
+                result = {"message_id": 1}
+            for path in paths:
+                self.assertLessEqual(Path(path).stat().st_size, limit)
+                probe = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
+                        path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                durations.append(float(probe.stdout))
+            return Mock(json=Mock(return_value={"result": result}))
+
+        self.post.side_effect = accept_parts
+        with (
+            patch("app.uploader.MAX_UPLOAD_SIZE", limit),
+            patch("app.telegram_sender.MAX_UPLOAD_SIZE", limit),
+        ):
+            self.assertEqual(
+                self.worker.upload_group([(str(source), "caption")]), {str(source)}
+            )
+
+        self.assertGreater(len(durations), 1)
+        self.assertAlmostEqual(sum(durations), 6, places=1)
+        self.assertFalse(source.exists())
+        self.assertTrue(self.db.is_uploaded(source.name))
+
+    def test_split_upload_timeout_keeps_original_and_blocks_resending(self):
+        path = self.files[0][0]
+        self.sender._get_video_duration.return_value = 6
+
+        def split(*args, **kwargs):
+            pattern = args[0][-1]
+            for i in range(2):
+                Path(pattern % i).write_bytes(b"part")
+
+        self.post.side_effect = requests.ReadTimeout()
+        with (
+            patch("app.uploader.MAX_UPLOAD_SIZE", 4),
+            patch("app.telegram_sender.MAX_UPLOAD_SIZE", 4),
+            patch("app.uploader.subprocess.run", side_effect=split),
+        ):
+            self.assertFalse(self.worker.upload_group(self.files[:1]))
+            self.assertFalse(self.worker.upload_group(self.files[:1]))
+
+        self.post.assert_called_once()
+        self.assertTrue(Path(path).exists())
+        self.assertIn(Path(path).name, self.db.get_attempted_files())
+
+    def test_ffmpeg_split_failure_keeps_original_without_claiming_upload(self):
+        source = Path(self.files[0][0])
+        self.sender._get_video_duration.return_value = 6
+        with (
+            patch("app.uploader.MAX_UPLOAD_SIZE", 4),
+            patch(
+                "app.uploader.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "ffmpeg"),
+            ),
+        ):
+            self.assertFalse(self.worker.upload_group(self.files[:1]))
+
+        self.assertTrue(source.exists())
+        self.assertFalse(self.db.get_attempted_files())
+        self.assertFalse(list(self.root.glob(".split-*")))
+        self.post.assert_not_called()
+
+    def test_split_with_no_small_enough_parts_keeps_original(self):
+        source = Path(self.files[0][0])
+        self.sender._get_video_duration.return_value = 6
+
+        def unsplittable(*args, **kwargs):
+            Path(args[0][-1] % 0).write_bytes(b"too large")
+
+        with (
+            patch("app.uploader.MAX_UPLOAD_SIZE", 4),
+            patch("app.uploader.subprocess.run", side_effect=unsplittable) as split,
+        ):
+            self.assertFalse(self.worker.upload_group(self.files[:1]))
+
+        self.assertEqual(split.call_count, 8)
+        self.assertTrue(source.exists())
+        self.assertFalse(self.db.get_attempted_files())
+        self.post.assert_not_called()
+
+    def test_partial_success_response_does_not_delete_files(self):
+        self.response.json.return_value = {"result": [{"message_id": 1}]}
+
+        self.assertFalse(self.worker.upload_group(self.files))
+
+        self.assertTrue(all(Path(p).exists() for p, _ in self.files))
+        self.assertFalse(self.db.get_uploaded_files())
+
+    def test_main_checks_disk_before_live_poll_while_uploads_are_busy(self):
+        with patch("logging.basicConfig"):
+            from app import main
+
+        recording = Mock(running=True)
+        recording.check_disk_space.side_effect = RuntimeError("low disk")
+        recording.stop_recording.side_effect = lambda: setattr(
+            recording, "running", False
+        )
+
+        def poll(url):
+            self.assertFalse(recording.running)
+            return False
+
+        with (
+            patch.object(main, "recorder", recording),
+            patch.object(main, "uploader"),
+            patch.object(main, "log_memory"),
+            patch.object(Config, "channel", return_value="test"),
+            patch.object(main, "get_platform", return_value=("twitch", "test", "url")),
+            patch.object(main, "check_stream_via_streamlink", side_effect=poll),
+            patch.object(main.time, "sleep", side_effect=KeyboardInterrupt),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                main.main()
+
+        recording.stop_recording.assert_called_once()
+
+    def test_stop_pipeline_allows_ffmpeg_to_finalize_before_termination(self):
+        recorder = Recorder()
+        producer = Mock(returncode=0)
+        consumer = Mock(returncode=0)
+        producer.poll.return_value = None
+        consumer.poll.return_value = None
+        recorder.streamlink = producer
+        recorder.ffmpeg = consumer
+
+        recorder.stop_recording()
+
+        producer.terminate.assert_called_once()
+        consumer.wait.assert_called_once_with(timeout=30)
+        consumer.terminate.assert_not_called()
+        self.assertIsNone(recorder.ffmpeg)
+
+    def test_oversized_segment_flushes_before_disk_is_low(self):
+        group = self.files[:1]
+
+        with patch("app.recorder.MAX_UPLOAD_SIZE", 4):
+            self.recorder._flush_group_if_needed(group, set())
+
+        self.post.assert_called_once()
+        self.assertFalse(group)
+        self.recorder._stop_pipeline.assert_not_called()
 
     def test_restart_keeps_numbering_after_uploaded_files_are_deleted(self):
         self.recorder.current_session = "session"
@@ -491,7 +793,7 @@ class GroupUploadTests(unittest.TestCase):
 
         self.assertFalse(watcher.is_alive())
         self.assertEqual(observed_titles, ["old title"])
-        self.recorder._stop_pipeline.assert_called_once()
+        self.assertEqual(self.recorder._stop_pipeline.call_count, 2)
 
         self.recorder.start_recording(
             "stream-url", "new title", "2026-10-30T11:00:00+00:00", "channel"
@@ -500,7 +802,7 @@ class GroupUploadTests(unittest.TestCase):
         self.assertEqual(self.recorder.current_title, "new title")
         self.recorder._launch_processes.assert_called_once()
         self.recorder._start_watcher_thread.assert_called_once()
-        self.recorder._stop_pipeline.assert_called_once()
+        self.assertEqual(self.recorder._stop_pipeline.call_count, 2)
 
 
 if __name__ == "__main__":
